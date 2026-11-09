@@ -13,7 +13,7 @@ import (
 
 	"github.com/zeebo/blake3"
 
-	"github.com/progrium/h9reg/store"
+	"github.com/progrium/h9cache/store"
 )
 
 // DefaultRepackBelow is the share of a pack's bytes still in use below

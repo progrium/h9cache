@@ -20,15 +20,15 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/index"
-	"github.com/progrium/h9reg/ninep"
-	"github.com/progrium/h9reg/pull"
-	"github.com/progrium/h9reg/store"
-	"github.com/progrium/h9reg/store/dir"
-	s3store "github.com/progrium/h9reg/store/s3"
-	"github.com/progrium/h9reg/store/s3/s3fake"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/index"
+	"github.com/progrium/h9cache/ninep"
+	"github.com/progrium/h9cache/pull"
+	"github.com/progrium/h9cache/store"
+	"github.com/progrium/h9cache/store/dir"
+	s3store "github.com/progrium/h9cache/store/s3"
+	"github.com/progrium/h9cache/store/s3/s3fake"
+	"github.com/progrium/h9cache/tree"
 )
 
 func pushImage(t *testing.T) string {

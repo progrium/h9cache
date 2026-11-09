@@ -21,9 +21,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/progrium/h9reg/access"
-	"github.com/progrium/h9reg/imagefs"
-	"github.com/progrium/h9reg/ninep"
+	"github.com/progrium/h9cache/access"
+	"github.com/progrium/h9cache/imagefs"
+	"github.com/progrium/h9cache/ninep"
 )
 
 // MaxMessage bounds one WebSocket message, as h9 bounds its own.
@@ -62,7 +62,7 @@ func (h *Handler) access(w http.ResponseWriter, r *http.Request, spec string) (i
 	}
 	allow, ok := h.Tokens.Allow(bearer(r))
 	if !ok {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="h9reg"`)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="h9cache"`)
 		http.Error(w, "a valid bearer token is required", http.StatusUnauthorized)
 		return a, false
 	}
@@ -91,7 +91,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if p == "" {
-		fmt.Fprint(w, "h9reg: attach an image over 9P at ws(s)://HOST/IMAGE, or fetch /IMAGE/.h9index and /IMAGE/.h9image\n")
+		fmt.Fprint(w, "h9cache: attach an image over 9P at ws(s)://HOST/IMAGE, or fetch /IMAGE/.h9index and /IMAGE/.h9image\n")
 		return
 	}
 	http.NotFound(w, r)

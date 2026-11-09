@@ -11,11 +11,11 @@ import (
 	"github.com/hugelgupf/p9/linux"
 	"github.com/hugelgupf/p9/p9"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/ninep"
-	"github.com/progrium/h9reg/pull"
-	"github.com/progrium/h9reg/store/dir"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/ninep"
+	"github.com/progrium/h9cache/pull"
+	"github.com/progrium/h9cache/store/dir"
+	"github.com/progrium/h9cache/tree"
 )
 
 // TestServeDotL serves the test image to an independent 9P2000.L client,

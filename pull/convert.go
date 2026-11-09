@@ -8,8 +8,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/tree"
 )
 
 const (

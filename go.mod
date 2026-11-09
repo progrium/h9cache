@@ -1,4 +1,4 @@
-module github.com/progrium/h9reg
+module github.com/progrium/h9cache
 
 go 1.25.0
 

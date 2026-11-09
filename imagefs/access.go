@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/progrium/h9reg/pull"
+	"github.com/progrium/h9cache/pull"
 )
 
 // ErrDenied is returned when a client may not attach a repository.

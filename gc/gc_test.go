@@ -21,11 +21,11 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/pull"
-	"github.com/progrium/h9reg/store"
-	"github.com/progrium/h9reg/store/dir"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/pull"
+	"github.com/progrium/h9cache/store"
+	"github.com/progrium/h9cache/store/dir"
+	"github.com/progrium/h9cache/tree"
 )
 
 func layer(t *testing.T, files map[string]string) v1.Layer {

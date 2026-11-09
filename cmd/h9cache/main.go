@@ -1,13 +1,13 @@
-// Command h9reg is a container registry cache that serves images as 9P
+// Command h9cache is a container registry cache that serves images as 9P
 // trees. A client attaches with an image reference as the attach spec, and
 // gets that image's merged filesystem as the root:
 //
-//	h9reg serve --store /var/lib/h9reg --listen tcp!*!564
+//	h9cache serve --store /var/lib/h9cache --listen tcp!*!564
 //	h9 --root tcp!localhost!564 --root-spec alpine:3.20 sh
 //
 // It also serves 9P over WebSocket, where the URL path names the image:
 //
-//	h9reg serve --listen http!*!8564
+//	h9cache serve --listen http!*!8564
 //	h9 --root ws://localhost:8564/alpine:3.20 sh
 package main
 
@@ -28,22 +28,22 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
-	"github.com/progrium/h9reg/access"
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/gc"
-	"github.com/progrium/h9reg/imagefs"
-	"github.com/progrium/h9reg/ninep"
-	"github.com/progrium/h9reg/pull"
-	"github.com/progrium/h9reg/store"
-	"github.com/progrium/h9reg/store/dir"
-	"github.com/progrium/h9reg/store/s3"
-	"github.com/progrium/h9reg/tree"
-	"github.com/progrium/h9reg/web"
+	"github.com/progrium/h9cache/access"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/gc"
+	"github.com/progrium/h9cache/imagefs"
+	"github.com/progrium/h9cache/ninep"
+	"github.com/progrium/h9cache/pull"
+	"github.com/progrium/h9cache/store"
+	"github.com/progrium/h9cache/store/dir"
+	"github.com/progrium/h9cache/store/s3"
+	"github.com/progrium/h9cache/tree"
+	"github.com/progrium/h9cache/web"
 )
 
-const usage = `usage: h9reg serve [flags]
-       h9reg pull [flags] IMAGE...
-       h9reg gc [flags]
+const usage = `usage: h9cache serve [flags]
+       h9cache pull [flags] IMAGE...
+       h9cache gc [flags]
 
 Commands:
   serve   serve images over 9P; the attach spec, or the WebSocket URL
@@ -89,16 +89,16 @@ func main() {
 	}
 	cmd := os.Args[1]
 	var cfg config
-	fs := flag.NewFlagSet("h9reg "+cmd, flag.ExitOnError)
+	fs := flag.NewFlagSet("h9cache "+cmd, flag.ExitOnError)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, usage)
 		fs.PrintDefaults()
 	}
-	def := os.Getenv("H9REG_STORE")
+	def := os.Getenv("H9CACHE_STORE")
 	if def == "" {
-		def = "h9reg-data"
+		def = "h9cache-data"
 	}
-	fs.StringVar(&cfg.store, "store", def, "object store: a directory (or dir:PATH), or s3://BUCKET[/PREFIX][?endpoint=URL&region=R&path-style=true]; $H9REG_STORE")
+	fs.StringVar(&cfg.store, "store", def, "object store: a directory (or dir:PATH), or s3://BUCKET[/PREFIX][?endpoint=URL&region=R&path-style=true]; $H9CACHE_STORE")
 	fs.Var(&cfg.listen, "listen", "address to serve on: tcp!HOST!PORT or unix!PATH for 9P, http!HOST!PORT or https!HOST!PORT for 9P over WebSocket and the image files; repeatable (default tcp!*!564)")
 	fs.StringVar(&cfg.tokens, "tokens", "", "file of client tokens and the repositories each may attach; every HTTP request then needs one")
 	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "certificate for https listeners")
@@ -123,7 +123,7 @@ func main() {
 		fs.Usage()
 		return
 	default:
-		fmt.Fprintf(os.Stderr, "h9reg: unknown command %q\n\n", cmd)
+		fmt.Fprintf(os.Stderr, "h9cache: unknown command %q\n\n", cmd)
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -136,7 +136,7 @@ func main() {
 	slog.SetDefault(log)
 
 	if err := run(cmd, cfg, fs.Args(), log); err != nil {
-		fmt.Fprintf(os.Stderr, "h9reg: %v\n", err)
+		fmt.Fprintf(os.Stderr, "h9cache: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -184,7 +184,7 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 		TagTTL:   cfg.tagTTL,
 		Remote: []remote.Option{
 			remote.WithAuthFromKeychain(authn.DefaultKeychain),
-			remote.WithUserAgent("h9reg"),
+			remote.WithUserAgent("h9cache"),
 		},
 		Log:            log,
 		ClaimTTL:       cfg.claimTTL,

@@ -9,11 +9,11 @@ import (
 	"path"
 	"strings"
 
-	"github.com/progrium/h9reg/index"
-	"github.com/progrium/h9reg/ninep"
-	"github.com/progrium/h9reg/pull"
-	"github.com/progrium/h9reg/store"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/index"
+	"github.com/progrium/h9cache/ninep"
+	"github.com/progrium/h9cache/pull"
+	"github.com/progrium/h9cache/store"
+	"github.com/progrium/h9cache/tree"
 )
 
 // Names of the files the server adds at each image root.

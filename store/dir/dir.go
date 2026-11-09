@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/progrium/h9reg/store"
+	"github.com/progrium/h9cache/store"
 )
 
 // Store keeps objects as files under Root.

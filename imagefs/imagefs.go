@@ -15,10 +15,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/ninep"
-	"github.com/progrium/h9reg/pull"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/ninep"
+	"github.com/progrium/h9cache/pull"
+	"github.com/progrium/h9cache/tree"
 )
 
 // ErrDevice is returned when opening a device node or FIFO, which images

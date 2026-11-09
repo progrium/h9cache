@@ -18,11 +18,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/imagefs"
-	"github.com/progrium/h9reg/pull"
-	"github.com/progrium/h9reg/store"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/imagefs"
+	"github.com/progrium/h9cache/pull"
+	"github.com/progrium/h9cache/store"
+	"github.com/progrium/h9cache/tree"
 )
 
 // DefaultKeep is how long an unused image is kept.

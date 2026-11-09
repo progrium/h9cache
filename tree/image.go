@@ -11,7 +11,7 @@ import (
 
 	"github.com/zeebo/blake3"
 
-	"github.com/progrium/h9reg/store"
+	"github.com/progrium/h9cache/store"
 )
 
 // Errors from walking an image.

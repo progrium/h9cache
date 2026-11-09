@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/store/dir"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/store/dir"
 )
 
 // build makes a layer tree from "path kind [target]" lines. Directories

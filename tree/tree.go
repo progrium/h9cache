@@ -15,8 +15,8 @@ import (
 
 	core "github.com/fvs-lab/core"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/store"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/store"
 )
 
 // Kind is the type of a tree entry.

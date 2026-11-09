@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/progrium/h9reg/store/s3/s3fake"
-	"github.com/progrium/h9reg/store/storetest"
+	"github.com/progrium/h9cache/store/s3/s3fake"
+	"github.com/progrium/h9cache/store/storetest"
 )
 
 func TestFake(t *testing.T) {
@@ -18,12 +18,12 @@ func TestFake(t *testing.T) {
 }
 
 // TestReal runs the conformance tests against a real bucket, such as a
-// MinIO server, when H9REG_TEST_S3 names one (an s3:// store URL whose
+// MinIO server, when H9CACHE_TEST_S3 names one (an s3:// store URL whose
 // prefix is safe to fill).
 func TestReal(t *testing.T) {
-	u := os.Getenv("H9REG_TEST_S3")
+	u := os.Getenv("H9CACHE_TEST_S3")
 	if u == "" {
-		t.Skip("H9REG_TEST_S3 is not set")
+		t.Skip("H9CACHE_TEST_S3 is not set")
 	}
 	st, err := Open(context.Background(), u)
 	if err != nil {

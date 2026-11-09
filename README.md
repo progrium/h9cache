@@ -1,4 +1,4 @@
-# h9reg
+# h9cache
 
 A container registry cache that serves images as 9P trees. A client attaches
 with an image reference as the attach spec and gets that image's merged
@@ -6,14 +6,14 @@ filesystem as its root. The first attach of an image pulls and converts it,
 and every later attach is served from the store.
 
 ```sh
-h9reg serve --store /var/lib/h9reg --listen 'tcp!*!564'
+h9cache serve --store /var/lib/h9cache --listen 'tcp!*!564'
 h9 --root 'tcp!localhost!564' --root-spec alpine:3.20 --ns linux.ns sh
 ```
 
 Or over WebSocket, where the URL path names the image:
 
 ```sh
-h9reg serve --store /var/lib/h9reg --listen 'http!*!8564'
+h9cache serve --store /var/lib/h9cache --listen 'http!*!8564'
 h9 --root ws://localhost:8564/alpine:3.20 --ns linux.ns sh
 ```
 
@@ -55,7 +55,7 @@ Each image root also holds two read-only files that aren't in the image:
   symlink to a directory is listed but marked `!unindexed` rather than
   followed, and a name the format can't hold (one with a space or a newline)
   marks its directory `!unindexed`. The index is built the first time an
-  image is served, or by `h9reg pull`, and stored under `index/`. An image
+  image is served, or by `h9cache pull`, and stored under `index/`. An image
   never changes, so neither does its index.
 - **`/.h9image`** is the image's identity and the config a runner needs, one
   `key value` line each, with the value as JSON:
@@ -172,7 +172,7 @@ token's patterns gets 403 over HTTP or `permission denied` from the attach.
 h9 --root ws://reg.example:8564/alpine:3.20 --root-header 'Authorization: Bearer 3f9c0b7e5d1a42c8a6e1' sh
 ```
 
-Plain 9P has no way to present a token, so with `--tokens` h9reg refuses
+Plain 9P has no way to present a token, so with `--tokens` h9cache refuses
 `tcp!` listeners. A `unix!` socket is still allowed, guarded by its file
 permissions. Tokens guard which images a client may attach, not upstream
 credentials: those stay on the server either way.
@@ -219,14 +219,14 @@ and `/etc/group`.
 ## Commands
 
 ```
-h9reg serve [flags]          serve images over 9P
-h9reg pull [flags] IMAGE...  pull images into the store ahead of time
-h9reg gc [flags]             delete images unused for --keep, and what only they used
+h9cache serve [flags]          serve images over 9P
+h9cache pull [flags] IMAGE...  pull images into the store ahead of time
+h9cache gc [flags]             delete images unused for --keep, and what only they used
 ```
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--store` | `$H9REG_STORE`, else `h9reg-data` | The object store: a directory, `dir:PATH`, or an `s3://` URL (below) |
+| `--store` | `$H9CACHE_STORE`, else `h9cache-data` | The object store: a directory, `dir:PATH`, or an `s3://` URL (below) |
 | `--listen` | `tcp!*!564` | `tcp!HOST!PORT` or `unix!PATH` for 9P, `http!HOST!PORT` or `https!HOST!PORT` for WebSocket and HTTP; repeatable |
 | `--tokens` | none | A file of client tokens; every HTTP request then needs one |
 | `--tls-cert`, `--tls-key` | none | Certificate and key for `https!` listeners |
@@ -277,8 +277,8 @@ pack list, at most once a second, to find packs other instances wrote.
 
 ```sh
 export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…
-h9reg serve --store 's3://my-bucket/h9reg?region=us-east-1'
-h9reg serve --store 's3://h9reg?endpoint=http://localhost:9000&path-style=true'   # MinIO
+h9cache serve --store 's3://my-bucket/h9cache?region=us-east-1'
+h9cache serve --store 's3://h9cache?endpoint=http://localhost:9000&path-style=true'   # MinIO
 ```
 
 The URL is `s3://BUCKET[/PREFIX]`, with optional `endpoint`, `region`, and
@@ -290,7 +290,7 @@ ranged read can't be checked against a whole-object checksum; every chunk is
 checked against its own BLAKE3 id instead.
 
 `go test ./store/s3` runs against an in-process S3 server. Set
-`H9REG_TEST_S3` to an `s3://` URL to also run the store tests against a real
+`H9CACHE_TEST_S3` to an `s3://` URL to also run the store tests against a real
 bucket.
 
 ### ZeroFS
@@ -299,16 +299,16 @@ The directory store works over any POSIX mount, a ZeroFS mount included, with
 no extra code. That's reasonable for a single cache next to a ZeroFS home
 server. With more than one instance, use S3 directly: ZeroFS has one writer,
 its read replicas lag the writer, and its compression and GC duplicate
-h9reg's own.
+h9cache's own.
 
 ## Garbage collection
 
 ```sh
-h9reg gc --store s3://my-bucket/h9reg --dry-run
-h9reg gc --store s3://my-bucket/h9reg --keep 720h
+h9cache gc --store s3://my-bucket/h9cache --dry-run
+h9cache gc --store s3://my-bucket/h9cache --keep 720h
 ```
 
-`h9reg gc` deletes images that weren't pulled or attached within `--keep`,
+`h9cache gc` deletes images that weren't pulled or attached within `--keep`,
 then everything only they used:
 
 1. **Records:** each unused image's record, index, and use record go first,
@@ -338,7 +338,7 @@ rare, and the next attach pulls the image again.
 ## Layout
 
 ```
-cmd/h9reg/   main: flags, store, listeners
+cmd/h9cache/   main: flags, store, listeners
 store/       object store interface
   dir/       directory backend
   s3/        S3 backend
