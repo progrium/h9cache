@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "h9cache",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-09",
+  "containers": [
+    {
+      "class_name": "H9cache",
+      "image": "./Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "H9CACHE", "class_name": "H9cache" }]
+  },
+  "exports": {
+    "H9cache": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "vars": {
+    // Set these to your R2 bucket and account.
+    "R2_BUCKET": "h9cache",
+    "R2_ACCOUNT_ID": ""
+  }
+}
