@@ -73,6 +73,8 @@ type config struct {
 	tlsCert  string
 	tlsKey   string
 	claimTTL time.Duration
+	mkroot   bool
+	mkrootRg string
 }
 
 func main() {
@@ -96,6 +98,8 @@ func main() {
 	fs.StringVar(&cfg.tokens, "tokens", "", "file of client tokens and the repositories each may attach; every HTTP request then needs one")
 	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "certificate for https listeners")
 	fs.StringVar(&cfg.tlsKey, "tls-key", "", "key for https listeners")
+	fs.BoolVar(&cfg.mkroot, "mkroot", true, "look up OWNER/NAME, and ghcr.io/OWNER/NAME, as ghcr.io/OWNER/mkroot-NAME first")
+	fs.StringVar(&cfg.mkrootRg, "mkroot-registry", pull.MkrootRegistry, "registry --mkroot looks in")
 	fs.DurationVar(&cfg.claimTTL, "claim-ttl", pull.DefaultClaimTTL, "how long another instance's pull claim stands without being refreshed")
 	fs.StringVar(&cfg.platform, "platform", pull.DefaultPlatform().String(), "platform picked from multi-platform images")
 	fs.DurationVar(&cfg.tagTTL, "tag-ttl", 5*time.Minute, "how long a tag's resolution is trusted before checking upstream")
@@ -175,8 +179,10 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 			remote.WithAuthFromKeychain(authn.DefaultKeychain),
 			remote.WithUserAgent("h9reg"),
 		},
-		Log:      log,
-		ClaimTTL: cfg.claimTTL,
+		Log:            log,
+		ClaimTTL:       cfg.claimTTL,
+		Mkroot:         cfg.mkroot,
+		MkrootRegistry: cfg.mkrootRg,
 	}
 	fs := &imagefs.FS{Puller: puller, CAS: chunks, Trees: tree.NewCache(st, 64<<10)}
 
@@ -190,6 +196,9 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 			if err != nil {
 				return err
 			}
+			if spec, err = puller.Locate(ctx, spec); err != nil {
+				return err
+			}
 			img, err := puller.Resolve(ctx, spec)
 			if err != nil {
 				return err
@@ -197,7 +206,7 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 			if err := fs.Prepare(ctx, img); err != nil {
 				return err
 			}
-			fmt.Printf("%s\t%s\t%s\n", a, img.Manifest, img.Platform)
+			fmt.Printf("%s\t%s\t%s\t%s\n", a, pull.RepoName(spec.Ref), img.Manifest, img.Platform)
 		}
 		return nil
 	}

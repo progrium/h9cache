@@ -32,7 +32,7 @@ type virtual struct {
 
 func (v *virtual) stat(im *image) ninep.Dir {
 	t := uint32(im.rec.Pulled.Unix())
-	owner := idName(im.users, 0)
+	owner, group := im.owners(im.rec.Root)
 	return ninep.Dir{
 		Qid:    ninep.Qid{Path: v.qid},
 		Mode:   0o444,
@@ -41,7 +41,7 @@ func (v *virtual) stat(im *image) ninep.Dir {
 		Length: uint64(len(v.data)),
 		Name:   v.name,
 		UID:    owner,
-		GID:    idName(im.groups, 0),
+		GID:    group,
 		MUID:   owner,
 	}
 }

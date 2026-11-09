@@ -13,6 +13,9 @@ import (
 type Spec struct {
 	Ref      name.Reference
 	Platform *v1.Platform // nil means the puller's default
+	// Implicit is set when the reference names no registry, as in
+	// "progrium/9front", so Docker Hub is only the default.
+	Implicit bool
 }
 
 // ParseSpec parses an attach spec. Short names expand as Docker expands
@@ -27,7 +30,7 @@ func ParseSpec(s string, opts ...name.Option) (Spec, error) {
 	if err != nil {
 		return Spec{}, err
 	}
-	spec := Spec{Ref: ref}
+	spec := Spec{Ref: ref, Implicit: implicitRegistry(refStr)}
 	if hasPlat {
 		p, err := v1.ParsePlatform(platStr)
 		if err != nil {
@@ -49,4 +52,15 @@ func RepoName(ref name.Reference) string {
 		reg = "docker.io"
 	}
 	return reg + "/" + ref.Context().RepositoryStr()
+}
+
+// implicitRegistry reports whether a reference leaves its registry to the
+// default, by Docker's rule: the first element names a registry when it
+// has a dot or a colon, or is localhost.
+func implicitRegistry(ref string) bool {
+	first, _, ok := strings.Cut(ref, "/")
+	if !ok {
+		return true
+	}
+	return !strings.ContainsAny(first, ".:") && first != "localhost"
 }

@@ -35,11 +35,15 @@ const (
 
 // Entry is one name in a directory.
 type Entry struct {
-	Name  string `json:"name"`
-	Kind  Kind   `json:"kind"`
-	Mode  uint32 `json:"mode"` // permission bits with setuid, setgid, and sticky
-	UID   int    `json:"uid"`
-	GID   int    `json:"gid"`
+	Name string `json:"name"`
+	Kind Kind   `json:"kind"`
+	Mode uint32 `json:"mode"` // permission bits with setuid, setgid, and sticky
+	UID  int    `json:"uid"`
+	GID  int    `json:"gid"`
+	// User and Group are owner names, from a layer that carries them, as
+	// a Plan 9 tree's must: Plan 9 has no numeric ids.
+	User  string `json:"user,omitempty"`
+	Group string `json:"group,omitempty"`
 	MTime int64  `json:"mtime"`
 	Size  int64  `json:"size,omitempty"`
 

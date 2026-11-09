@@ -166,6 +166,33 @@ that died, and the next waiter takes it over. A claim only saves work: what
 a pull writes is content-addressed, so two instances that do pull the same
 image at once store the same result.
 
+## 9front roots
+
+h9 runs a 9P root as a 9front root, so a 9front tree packaged as an image
+needs nothing more:
+
+```sh
+h9 --root ws://localhost:8564/progrium/9front rc
+```
+
+**mkroot images.** Root images are built by repositories named
+`mkroot-NAME`, such as [mkroot-9front](https://github.com/progrium/mkroot-9front),
+and published as `ghcr.io/OWNER/mkroot-NAME`. A reference to `OWNER/NAME`
+that names no registry, or names `ghcr.io`, is looked up as
+`ghcr.io/OWNER/mkroot-NAME` first, so `progrium/9front` attaches
+`ghcr.io/progrium/mkroot-9front`. When that doesn't exist, the reference is
+pulled as written: `acme/app` is still Docker Hub's. Each answer is
+remembered for `--tag-ttl`. Client tokens are checked against the repository
+actually pulled. `--mkroot=false` turns the lookup off.
+
+**Platforms.** A multi-platform image with no image for `linux/ARCH` falls
+back to `plan9/ARCH`, so 9front images need no `!plan9/amd64`.
+
+**Owners.** Plan 9 owners are names, not ids. A layer entry with zero ids
+and an owner name other than `root` keeps its names, and the server reports
+them as they are. Other entries are named through the image's `/etc/passwd`
+and `/etc/group`.
+
 ## Commands
 
 ```
@@ -179,6 +206,8 @@ h9reg pull [flags] IMAGE...  pull images into the store ahead of time
 | `--listen` | `tcp!*!564` | `tcp!HOST!PORT` or `unix!PATH` for 9P, `http!HOST!PORT` or `https!HOST!PORT` for WebSocket and HTTP; repeatable |
 | `--tokens` | none | A file of client tokens; every HTTP request then needs one |
 | `--tls-cert`, `--tls-key` | none | Certificate and key for `https!` listeners |
+| `--mkroot` | on | Look `OWNER/NAME` and `ghcr.io/OWNER/NAME` up as `ghcr.io/OWNER/mkroot-NAME` first |
+| `--mkroot-registry` | `ghcr.io` | Where `--mkroot` looks |
 | `--claim-ttl` | `2m` | How long another instance's pull claim stands without being refreshed |
 | `--platform` | `linux/` plus the build's architecture | Platform picked from multi-platform images |
 | `--tag-ttl` | `5m` | How long a tag's resolution is trusted |
@@ -207,9 +236,10 @@ one layout.
 | `platforms/` | index digest and platform | The manifest digest picked from a multi-platform index |
 | `refs/` | registry/repo/tag | Manifest or index digest, and when it was resolved |
 | `index/v1/` | platform manifest digest | The image's `.h9index` text |
+| `mkroot/` | reference as written | The mkroot reference it was found as, or none, and when it was checked |
 | `pulling/` | top digest and platform | A pull in progress: the instance and when it last refreshed the claim |
 
-Only `refs/` and `pulling/` are ever overwritten. A pull writes one batch of packs per
+Only `refs/`, `mkroot/`, and `pulling/` are ever overwritten. A pull writes one batch of packs per
 layer and flushes it before recording the layer, so nothing refers to a chunk
 that isn't stored. A pack is written before its index, so an index is only
 ever visible for a whole pack. An instance that misses a chunk reloads the

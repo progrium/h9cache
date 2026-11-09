@@ -98,6 +98,9 @@ func setAttrs(e *tree.Entry, hdr *tar.Header) {
 	e.Mode = uint32(hdr.Mode) & 0o7777
 	e.UID = hdr.Uid
 	e.GID = hdr.Gid
+	if plan9Owners(hdr) {
+		e.User, e.Group = hdr.Uname, hdr.Gname
+	}
 	e.MTime = hdr.ModTime.Unix()
 }
 
@@ -117,4 +120,12 @@ func ensureDir(root *tree.Node, dir string) *tree.Node {
 		n = c
 	}
 	return n
+}
+
+// plan9Owners reports whether a tar entry's owner names stand on their
+// own, as Plan 9's do, rather than naming numeric ids. Docker layers name
+// ids, when they name anything, and the image's passwd file names them
+// better, so names are taken only from an entry with no ids.
+func plan9Owners(hdr *tar.Header) bool {
+	return hdr.Uid == 0 && hdr.Gid == 0 && hdr.Uname != "" && hdr.Uname != "root"
 }

@@ -65,6 +65,10 @@ func (fs *FS) Open(ctx context.Context, aname string) (*Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("attach spec %q: %w", aname, err)
 	}
+	// Access is checked against the repository actually pulled.
+	if spec, err = fs.Puller.Locate(ctx, spec); err != nil {
+		return nil, err
+	}
 	if err := accessFrom(ctx).check(spec); err != nil {
 		return nil, err
 	}
@@ -149,6 +153,19 @@ func (fs *FS) idNames(ctx context.Context, im *image, p string) map[int]string {
 	return names
 }
 
+// owners names an entry's owner and group: the names its layer carried,
+// else its ids as the image's passwd and group files name them.
+func (im *image) owners(e tree.Entry) (string, string) {
+	u, g := e.User, e.Group
+	if u == "" {
+		u = idName(im.users, e.UID)
+	}
+	if g == "" {
+		g = idName(im.groups, e.GID)
+	}
+	return u, g
+}
+
 func idName(m map[int]string, id int) string {
 	if n, ok := m[id]; ok {
 		return n
@@ -205,9 +222,8 @@ func (f *file) Stat(ctx context.Context) (ninep.Dir, error) {
 		Mtime: uint32(e.MTime),
 		Atime: uint32(e.MTime),
 		Name:  f.name,
-		UID:   idName(f.im.users, e.UID),
-		GID:   idName(f.im.groups, e.GID),
 	}
+	d.UID, d.GID = f.im.owners(e)
 	d.MUID = d.UID
 	switch e.Kind {
 	case tree.Dir:
