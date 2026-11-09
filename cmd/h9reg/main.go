@@ -28,6 +28,7 @@ import (
 	"github.com/progrium/h9reg/pull"
 	"github.com/progrium/h9reg/store"
 	"github.com/progrium/h9reg/store/dir"
+	"github.com/progrium/h9reg/store/s3"
 	"github.com/progrium/h9reg/tree"
 )
 
@@ -55,6 +56,9 @@ type config struct {
 	platform string
 	tagTTL   time.Duration
 	cacheMB  int64
+	diskDir  string
+	diskMB   int64
+	prefetch int
 	verbose  bool
 }
 
@@ -74,11 +78,14 @@ func main() {
 	if def == "" {
 		def = "h9reg-data"
 	}
-	fs.StringVar(&cfg.store, "store", def, "object store: a directory (or dir:PATH); $H9REG_STORE")
+	fs.StringVar(&cfg.store, "store", def, "object store: a directory (or dir:PATH), or s3://BUCKET[/PREFIX][?endpoint=URL&region=R&path-style=true]; $H9REG_STORE")
 	fs.Var(&cfg.listen, "listen", "address to serve 9P on: tcp!HOST!PORT or unix!PATH; repeatable (default tcp!*!564)")
 	fs.StringVar(&cfg.platform, "platform", pull.DefaultPlatform().String(), "platform picked from multi-platform images")
 	fs.DurationVar(&cfg.tagTTL, "tag-ttl", 5*time.Minute, "how long a tag's resolution is trusted before checking upstream")
 	fs.Int64Var(&cfg.cacheMB, "cache-mb", 256, "memory for cached chunks, in MB")
+	fs.StringVar(&cfg.diskDir, "disk-cache", "", "directory for a local cache of chunks, between memory and the store; none if empty")
+	fs.Int64Var(&cfg.diskMB, "disk-cache-mb", 4096, "size of the disk cache, in MB")
+	fs.IntVar(&cfg.prefetch, "prefetch", 4, "chunks to read ahead after each read")
 	fs.BoolVar(&cfg.verbose, "v", false, "log debug detail")
 
 	switch cmd {
@@ -106,10 +113,10 @@ func main() {
 	}
 }
 
-func openStore(spec string) (store.Store, error) {
+func openStore(ctx context.Context, spec string) (store.Store, error) {
 	switch {
 	case strings.HasPrefix(spec, "s3://"):
-		return nil, errors.New("the S3 backend is not built yet; use a directory")
+		return s3.Open(ctx, spec)
 	case strings.HasPrefix(spec, "dir:"):
 		return dir.New(strings.TrimPrefix(spec, "dir:"))
 	default:
@@ -118,7 +125,9 @@ func openStore(spec string) (store.Store, error) {
 }
 
 func run(cmd string, cfg config, args []string, log *slog.Logger) error {
-	st, err := openStore(cfg.store)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	st, err := openStore(ctx, cfg.store)
 	if err != nil {
 		return err
 	}
@@ -127,6 +136,19 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 		return fmt.Errorf("--platform: %w", err)
 	}
 	chunks := cas.New(st, cfg.cacheMB<<20)
+	chunks.Prefetch = cfg.prefetch
+	chunks.Log = log
+	if cfg.diskDir != "" {
+		if chunks.Disk, err = cas.OpenDiskCache(cfg.diskDir, cfg.diskMB<<20); err != nil {
+			return fmt.Errorf("--disk-cache: %w", err)
+		}
+	}
+	start := time.Now()
+	if err := chunks.LoadPacks(ctx); err != nil {
+		return fmt.Errorf("loading pack indexes: %w", err)
+	}
+	packs, n := chunks.PackStats()
+	log.Info("loaded pack indexes", "packs", packs, "chunks", n, "took", time.Since(start).Round(time.Millisecond))
 	puller := &pull.Puller{
 		Store:    st,
 		CAS:      chunks,
@@ -138,8 +160,6 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 		},
 		Log: log,
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	fs := &imagefs.FS{Puller: puller, CAS: chunks, Trees: tree.NewCache(st, 64<<10)}
 
 	switch cmd {
