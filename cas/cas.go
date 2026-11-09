@@ -77,6 +77,7 @@ type CAS struct {
 	locs        map[string]loc
 	packs       map[string]bool // pack ids whose index is loaded
 	lastRefresh time.Time
+	fullLoad    time.Time // when every index was last read from scratch
 
 	prefetching chan struct{} // bounds read-ahead goroutines
 }
@@ -209,6 +210,17 @@ func (c *CAS) fetch(ctx context.Context, id string) ([]byte, error) {
 	l, ok := c.where(ctx, id)
 	if ok {
 		enc, err := c.Store.GetRange(ctx, PackKey(l.pack), l.off, l.n)
+		if errors.Is(err, store.ErrNotFound) {
+			// Garbage collection deleted the pack, after moving the chunk
+			// to another one if it's still used.
+			if rerr := c.ReloadPacks(ctx); rerr != nil {
+				return nil, rerr
+			}
+			if l, ok = c.where(ctx, id); !ok {
+				return nil, fmt.Errorf("cas: chunk %s: %w", id, ErrNotFound)
+			}
+			enc, err = c.Store.GetRange(ctx, PackKey(l.pack), l.off, l.n)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("cas: chunk %s in pack %s: %w", id, l.pack, err)
 		}

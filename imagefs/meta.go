@@ -87,9 +87,9 @@ func nonNil(s []string) []string {
 	return s
 }
 
-// indexKey is where an image's index is kept. It's keyed by manifest, not
+// IndexKey is where an image's index is kept. It's keyed by manifest, not
 // tree, since it lists /.h9image, whose contents are the manifest's.
-func indexKey(manifest string) string {
+func IndexKey(manifest string) string {
 	return "index/v1/" + strings.Replace(manifest, ":", "/", 1)
 }
 
@@ -107,7 +107,7 @@ func (fs *FS) addMeta(ctx context.Context, im *image) error {
 	im.meta = []*virtual{img}
 
 	st := fs.Puller.Store
-	key := indexKey(im.rec.Manifest)
+	key := IndexKey(im.rec.Manifest)
 	data, err := st.Get(ctx, key)
 	if errors.Is(err, store.ErrNotFound) {
 		data, err = fs.buildIndex(ctx, im)

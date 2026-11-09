@@ -87,6 +87,30 @@ func (p *Puller) claimedPull(ctx context.Context, top v1.Hash, plat v1.Platform,
 			return nil, err
 		}
 		if won {
+			// A collection in progress may delete what this pull would
+			// reuse, so wait it out without holding the claim.
+			running, err := p.gcRunning(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if running {
+				if derr := p.Store.Delete(ctx, key); derr != nil && !errors.Is(derr, store.ErrNotFound) {
+					return nil, derr
+				}
+				if !waiting {
+					p.log().Info("waiting for garbage collection", "key", key)
+					waiting = true
+				}
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(p.pollInterval()):
+				}
+				continue
+			}
+			if err := p.syncEpoch(ctx); err != nil {
+				return nil, err
+			}
 			return p.pullHolding(ctx, key, me, func(ctx context.Context) (*Image, error) {
 				// Another instance may have finished since our lookup.
 				if img, err := p.lookup(ctx, top, plat); img != nil || err != nil {

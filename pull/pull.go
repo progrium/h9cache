@@ -31,6 +31,10 @@ type Image struct {
 	Platform string        `json:"platform"`
 	Config   v1.ConfigFile `json:"config"`
 	Pulled   time.Time     `json:"pulled"`
+	// Layers are the layer blob digests, which garbage collection keeps
+	// records of while the image is kept. Records from before it are
+	// missing them.
+	Layers []string `json:"layers,omitempty"`
 }
 
 // Layer is the stored record of a converted layer, under layers/.
@@ -72,6 +76,7 @@ type Puller struct {
 
 	mu       sync.Mutex
 	inflight map[string]*call
+	touched  map[string]time.Time // last Touch of each manifest
 }
 
 type call struct {
@@ -279,7 +284,13 @@ func (p *Puller) pull(ctx context.Context, ref name.Digest, top v1.Hash, plat v1
 		return nil, err
 	}
 	merged := tree.NewDir(tree.Entry{Mode: 0o755})
+	var digests []string
 	for i, l := range layers {
+		d, err := l.Digest()
+		if err != nil {
+			return nil, err
+		}
+		digests = append(digests, d.String())
 		rec, err := p.layer(ctx, l)
 		if err != nil {
 			return nil, fmt.Errorf("%s: layer %d: %w", ref, i, err)
@@ -307,6 +318,7 @@ func (p *Puller) pull(ctx context.Context, ref name.Digest, top v1.Hash, plat v1
 		Platform: platform.String(),
 		Config:   *cfg,
 		Pulled:   time.Now().UTC(),
+		Layers:   digests,
 	}
 	if err := putJSON(ctx, p.Store, digestKey("images/", manifest), rec); err != nil {
 		return nil, err

@@ -76,6 +76,7 @@ func (fs *FS) Open(ctx context.Context, aname string) (*Image, error) {
 	if err != nil {
 		return nil, err
 	}
+	fs.Puller.Touch(ctx, rec)
 	return fs.image(ctx, rec)
 }
 

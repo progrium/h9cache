@@ -198,6 +198,7 @@ and `/etc/group`.
 ```
 h9reg serve [flags]          serve images over 9P
 h9reg pull [flags] IMAGE...  pull images into the store ahead of time
+h9reg gc [flags]             delete images unused for --keep, and what only they used
 ```
 
 | Flag | Default | Meaning |
@@ -215,6 +216,8 @@ h9reg pull [flags] IMAGE...  pull images into the store ahead of time
 | `--disk-cache` | none | A directory for a local cache of chunks, kept across restarts |
 | `--disk-cache-mb` | `4096` | The disk cache's size |
 | `--prefetch` | `4` | Chunks to read ahead after each read |
+| `--keep` | `720h` (30 days) | `gc`: keep images pulled or attached within this long |
+| `--dry-run` | off | `gc`: report what would be deleted, and delete nothing |
 | `-v` | off | Debug logging |
 
 Upstream credentials come from the Docker config (`~/.docker/config.json` and
@@ -238,8 +241,10 @@ one layout.
 | `index/v1/` | platform manifest digest | The image's `.h9index` text |
 | `mkroot/` | reference as written | The mkroot reference it was found as, or none, and when it was checked |
 | `pulling/` | top digest and platform | A pull in progress: the instance and when it last refreshed the claim |
+| `used/` | platform manifest digest | When the image was last attached, written at most hourly per instance |
+| `gc/` | `lock`, `epoch` | A collection in progress, and when the last one finished |
 
-Only `refs/`, `mkroot/`, and `pulling/` are ever overwritten. A pull writes one batch of packs per
+Only `refs/`, `mkroot/`, `pulling/`, `used/`, and `gc/` are ever overwritten. A pull writes one batch of packs per
 layer and flushes it before recording the layer, so nothing refers to a chunk
 that isn't stored. A pack is written before its index, so an index is only
 ever visible for a whole pack. An instance that misses a chunk reloads the
@@ -273,6 +278,40 @@ server. With more than one instance, use S3 directly: ZeroFS has one writer,
 its read replicas lag the writer, and its compression and GC duplicate
 h9reg's own.
 
+## Garbage collection
+
+```sh
+h9reg gc --store s3://my-bucket/h9reg --dry-run
+h9reg gc --store s3://my-bucket/h9reg --keep 720h
+```
+
+`h9reg gc` deletes images that weren't pulled or attached within `--keep`,
+then everything only they used:
+
+1. **Records:** each unused image's record, index, and use record go first,
+   so nothing finds an image whose trees are going. Platform records that
+   name a deleted image go too, as do tag resolutions and mkroot lookups
+   older than `--keep`, which only cost a lookup to redo. Layer records go
+   unless a kept image lists the layer. Image records from before images
+   listed their layers keep every layer record until they're gone.
+2. **Mark:** every tree and chunk reachable from the kept images and layer
+   records.
+3. **Sweep:** trees and loose chunks that aren't marked, and packs with no
+   marked chunk. A pack that's less than half live is rewritten: its live
+   chunks go into new packs, then it's deleted.
+
+It runs beside serving instances. A pull can reuse any stored chunk, so a
+collection and pulls take turns: the collection creates `gc/lock`, then waits
+until no pull claim is fresh, and a pull that finds the lock after taking its
+claim lets the claim go and waits. When it's done, the collection writes
+`gc/epoch`. An instance reloads its pack indexes before its next pull if a
+collection finished after it last loaded them, and whenever a read finds its
+pack gone, so a rewritten pack moves chunks without breaking reads.
+
+An image that's unused for `--keep` and then attached while a collection is
+marking can be deleted under that attach. With a `--keep` of days, that's
+rare, and the next attach pulls the image again.
+
 ## Layout
 
 ```
@@ -289,6 +328,7 @@ index/       the .h9index text format
 ninep/       9P2000 server (and a small client for tests)
 web/         9P over WebSocket, and the metadata files over HTTP
 access/      the client tokens file
+gc/          garbage collection
 ```
 
 Dependencies run one way: `imagefs` → `tree` → `cas` → `store`, with `pull`
@@ -305,7 +345,7 @@ writing through `tree` and `cas`. `ninep` knows nothing about images, and
 3. The S3 backend with packs and the chunk cache tiers. **Built.**
 4. WebSocket transport, the metadata files over HTTP, client tokens, and the
    pull claim for several instances. **Built.**
-5. Garbage collection.
+5. Garbage collection. **Built.**
 6. 9P2000.L, with real symlinks, once h9's dotl translator exists.
 
 ## Test

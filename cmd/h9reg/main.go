@@ -30,6 +30,7 @@ import (
 
 	"github.com/progrium/h9reg/access"
 	"github.com/progrium/h9reg/cas"
+	"github.com/progrium/h9reg/gc"
 	"github.com/progrium/h9reg/imagefs"
 	"github.com/progrium/h9reg/ninep"
 	"github.com/progrium/h9reg/pull"
@@ -42,11 +43,13 @@ import (
 
 const usage = `usage: h9reg serve [flags]
        h9reg pull [flags] IMAGE...
+       h9reg gc [flags]
 
 Commands:
   serve   serve images over 9P; the attach spec, or the WebSocket URL
           path, names the image
   pull    pull images into the store ahead of time
+  gc      delete images unused for --keep, and what only they used
 
 IMAGE is a reference such as alpine:3.20, ghcr.io/org/app@sha256:...,
 optionally followed by !OS/ARCH[/VARIANT] to pick a platform.
@@ -75,6 +78,8 @@ type config struct {
 	claimTTL time.Duration
 	mkroot   bool
 	mkrootRg string
+	keep     time.Duration
+	dryRun   bool
 }
 
 func main() {
@@ -107,10 +112,12 @@ func main() {
 	fs.StringVar(&cfg.diskDir, "disk-cache", "", "directory for a local cache of chunks, between memory and the store; none if empty")
 	fs.Int64Var(&cfg.diskMB, "disk-cache-mb", 4096, "size of the disk cache, in MB")
 	fs.IntVar(&cfg.prefetch, "prefetch", 4, "chunks to read ahead after each read")
+	fs.DurationVar(&cfg.keep, "keep", gc.DefaultKeep, "gc: keep images pulled or attached within this long")
+	fs.BoolVar(&cfg.dryRun, "dry-run", false, "gc: report what would be deleted, and delete nothing")
 	fs.BoolVar(&cfg.verbose, "v", false, "log debug detail")
 
 	switch cmd {
-	case "serve", "pull":
+	case "serve", "pull", "gc":
 		fs.Parse(os.Args[2:])
 	case "-h", "-help", "--help", "help":
 		fs.Usage()
@@ -187,6 +194,16 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 	fs := &imagefs.FS{Puller: puller, CAS: chunks, Trees: tree.NewCache(st, 64<<10)}
 
 	switch cmd {
+	case "gc":
+		rep, err := gc.Run(ctx, st, gc.Options{Keep: cfg.keep, DryRun: cfg.dryRun, ClaimTTL: cfg.claimTTL, Log: log})
+		if err != nil {
+			return err
+		}
+		if cfg.dryRun {
+			fmt.Print("dry run: ")
+		}
+		fmt.Println(rep)
+		return nil
 	case "pull":
 		if len(args) == 0 {
 			return errors.New("pull: name at least one image")
