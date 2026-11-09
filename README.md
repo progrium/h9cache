@@ -27,9 +27,42 @@ The design is in [Registry cache over 9P](https://claude.ai/artifact/LwfegkQMCtV
 - **One merged tree per image.** Layers are merged at pull time, with
   whiteouts and opaque directories applied, and written as Merkle directory
   objects, so images that share a subtree share its objects.
+- **Packs on an object store.** Chunks are written in packs of about 32 MB,
+  each chunk compressed on its own, with a small index object per pack. A
+  chunk read is one ranged GET, however small the chunk, and the pack indexes
+  are loaded at startup. Any number of instances can share one bucket.
 - **Read-only 9P2000.** Walks and stats read tree objects from a memory cache,
-  and reads fetch only the chunks they need. Writes get "read-only file
-  system".
+  and reads fetch only the chunks they need, through a memory cache and an
+  optional disk cache, reading the next few chunks ahead. Writes get
+  "read-only file system".
+
+### Files the server adds
+
+Each image root also holds two read-only files that aren't in the image:
+
+- **`/.h9index`** lists every name in the image with its qid, mode, length,
+  mtime, and owner, in the text format of hyper9's
+  [mount-index](https://github.com/progrium/hyper9/blob/main/design/mount-index.md)
+  proposal, so h9 can answer walks and stats without asking. It lists the tree
+  as the server serves it, so every entry matches the server's own stat. A
+  symlink to a directory is listed but marked `!unindexed` rather than
+  followed, and a name the format can't hold (one with a space or a newline)
+  marks its directory `!unindexed`. The index is built the first time an
+  image is served, or by `h9reg pull`, and stored under `index/`. An image
+  never changes, so neither does its index.
+- **`/.h9image`** is the image's identity and the config a runner needs, one
+  `key value` line each, with the value as JSON:
+
+  ```
+  h9image 1
+  manifest "sha256:…"
+  platform "linux/amd64"
+  env ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
+  entrypoint []
+  cmd ["/bin/sh"]
+  workdir "/"
+  user ""
+  ```
 
 ### Symlinks
 
@@ -79,11 +112,14 @@ h9reg pull [flags] IMAGE...  pull images into the store ahead of time
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--store` | `$H9REG_STORE`, else `h9reg-data` | The object store: a directory, or `dir:PATH` |
+| `--store` | `$H9REG_STORE`, else `h9reg-data` | The object store: a directory, `dir:PATH`, or an `s3://` URL (below) |
 | `--listen` | `tcp!*!564` | `tcp!HOST!PORT` or `unix!PATH`; repeatable |
 | `--platform` | `linux/` plus the build's architecture | Platform picked from multi-platform images |
 | `--tag-ttl` | `5m` | How long a tag's resolution is trusted |
 | `--cache-mb` | `256` | Memory for cached chunks |
+| `--disk-cache` | none | A directory for a local cache of chunks, kept across restarts |
+| `--disk-cache-mb` | `4096` | The disk cache's size |
+| `--prefetch` | `4` | Chunks to read ahead after each read |
 | `-v` | off | Debug logging |
 
 Upstream credentials come from the Docker config (`~/.docker/config.json` and
@@ -96,16 +132,41 @@ one layout.
 
 | Prefix | Key | Holds |
 | --- | --- | --- |
-| `chunks/` | BLAKE3 of the chunk | One chunk, zstd-compressed when that's smaller |
+| `packs/` | BLAKE3 of the pack | Chunks, each zstd-compressed when that's smaller, back to back |
+| `packidx/` | pack id | Each chunk's id, offset, encoded length, and size in that pack |
+| `chunks/` | BLAKE3 of the chunk | One chunk, from stores made before packs; still read |
 | `trees/` | BLAKE3 of the object | One directory's sorted entries |
 | `layers/` | layer blob digest | The layer's tree id and root attributes |
 | `images/` | platform manifest digest | Image tree id, root attributes, platform, and config |
 | `platforms/` | index digest and platform | The manifest digest picked from a multi-platform index |
 | `refs/` | registry/repo/tag | Manifest or index digest, and when it was resolved |
+| `index/v1/` | platform manifest digest | The image's `.h9index` text |
 
-Only `refs/` is ever overwritten. Chunks are one object each for now; packs,
-which group chunks so S3 serves them with ranged GETs, come with the S3
-backend.
+Only `refs/` is ever overwritten. A pull writes one batch of packs per
+layer and flushes it before recording the layer, so nothing refers to a chunk
+that isn't stored. A pack is written before its index, so an index is only
+ever visible for a whole pack. An instance that misses a chunk reloads the
+pack list, at most once a second, to find packs other instances wrote.
+
+### S3
+
+```sh
+export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…
+h9reg serve --store 's3://my-bucket/h9reg?region=us-east-1'
+h9reg serve --store 's3://h9reg?endpoint=http://localhost:9000&path-style=true'   # MinIO
+```
+
+The URL is `s3://BUCKET[/PREFIX]`, with optional `endpoint`, `region`, and
+`path-style` query parameters for R2, GCS, MinIO, and other S3-compatible
+servers. Credentials, and the region and endpoint when the URL doesn't give
+them, come from the AWS SDK's usual sources: the environment, shared config
+files, and instance roles. Checksums on responses aren't required, since a
+ranged read can't be checked against a whole-object checksum; every chunk is
+checked against its own BLAKE3 id instead.
+
+`go test ./store/s3` runs against an in-process S3 server. Set
+`H9REG_TEST_S3` to an `s3://` URL to also run the store tests against a real
+bucket.
 
 ### ZeroFS
 
@@ -121,10 +182,13 @@ h9reg's own.
 cmd/h9reg/   main: flags, store, listeners
 store/       object store interface
   dir/       directory backend
-cas/         chunking and chunk storage over fvs core
+  s3/        S3 backend
+  storetest/ tests every backend runs
+cas/         chunking over fvs core, packs, and the chunk caches
 tree/        tree objects, layer merge, symlink resolution, qids
 pull/        reference parsing, tag resolution, layer conversion
-imagefs/     an image as a 9P file tree
+imagefs/     an image as a 9P file tree, with /.h9index and /.h9image
+index/       the .h9index text format
 ninep/       9P2000 server (and a small client for tests)
 ```
 
@@ -134,10 +198,12 @@ writing through `tree` and `cas`. `ninep` knows nothing about images.
 ## Roadmap
 
 1. Directory store, layer conversion and merge, tag resolution, and a 9P2000
-   server with server-side symlinks. **This is what's built.**
-2. `/.h9index` and `/.h9image` at commit, per hyper9's
+   server with server-side symlinks. **Built.**
+2. `/.h9index` and `/.h9image`, per hyper9's
    [mount-index](https://github.com/progrium/hyper9/blob/main/design/mount-index.md).
-3. The S3 backend with packs and the chunk cache tiers.
+   **Built.** Serving the index over HTTP comes with step 4's WebSocket
+   listener.
+3. The S3 backend with packs and the chunk cache tiers. **Built.**
 4. WebSocket transport, client tokens, and the pull claim for several
    instances.
 5. Garbage collection.

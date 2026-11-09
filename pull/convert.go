@@ -18,9 +18,9 @@ const (
 )
 
 // ConvertLayer reads an uncompressed layer tar and returns it as a layer
-// tree, storing each regular file's chunks in c. Whiteouts and opaque
-// markers are kept as entries for the merge.
-func ConvertLayer(ctx context.Context, c *cas.CAS, r io.Reader) (*tree.Node, error) {
+// tree, adding each regular file's chunks to b. Whiteouts and opaque
+// markers are kept as entries for the merge. The caller flushes b.
+func ConvertLayer(ctx context.Context, b *cas.Batch, r io.Reader) (*tree.Node, error) {
 	root := tree.NewDir(tree.Entry{Mode: 0o755})
 	tr := tar.NewReader(r)
 	for {
@@ -68,7 +68,7 @@ func ConvertLayer(ctx context.Context, c *cas.CAS, r io.Reader) (*tree.Node, err
 			continue
 		case tar.TypeReg, tar.TypeRegA, tar.TypeGNUSparse:
 			e.Kind = tree.File
-			chunks, size, err := c.WriteFile(ctx, tr)
+			chunks, size, err := b.WriteFile(ctx, tr)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", p, err)
 			}

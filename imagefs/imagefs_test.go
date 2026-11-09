@@ -3,6 +3,7 @@ package imagefs
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"io"
 	"log"
 	"net"
@@ -23,7 +24,10 @@ import (
 	"github.com/progrium/h9reg/index"
 	"github.com/progrium/h9reg/ninep"
 	"github.com/progrium/h9reg/pull"
+	"github.com/progrium/h9reg/store"
 	"github.com/progrium/h9reg/store/dir"
+	s3store "github.com/progrium/h9reg/store/s3"
+	"github.com/progrium/h9reg/store/s3/s3fake"
 	"github.com/progrium/h9reg/tree"
 )
 
@@ -71,8 +75,12 @@ func pushImage(t *testing.T) string {
 }
 
 func connect(t *testing.T) (*ninep.Client, string) {
-	ref := pushImage(t)
 	st, _ := dir.New(t.TempDir())
+	return connectStore(t, st)
+}
+
+func connectStore(t *testing.T, st store.Store) (*ninep.Client, string) {
+	ref := pushImage(t)
 	chunks := cas.New(st, 1<<20)
 	fs := &FS{
 		Puller: &pull.Puller{Store: st, CAS: chunks, Platform: pull.DefaultPlatform(), TagTTL: time.Hour},
@@ -235,5 +243,27 @@ func TestIndexMatchesServer(t *testing.T) {
 		if !strings.Contains(img, line) {
 			t.Fatalf(".h9image lacks %q:\n%s", line, img)
 		}
+	}
+}
+
+// The same image served from S3, through packs, reads the same.
+func TestServeFromS3(t *testing.T) {
+	st, err := s3store.Open(context.Background(), s3fake.URL(t, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ref := connectStore(t, st)
+	if _, err := c.RPC(&ninep.Fcall{Type: ninep.Tattach, Fid: 0, Afid: ninep.NoFid, Aname: ref}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(readFile(t, c, "bin", "sh")); got != "#!busybox" {
+		t.Fatalf("bin/sh: %q", got)
+	}
+	if _, err := index.Parse(bytes.NewReader(readFile(t, c, ".h9index"))); err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := st.List(context.Background(), "packs/")
+	if len(keys) == 0 {
+		t.Fatal("no packs in the bucket")
 	}
 }

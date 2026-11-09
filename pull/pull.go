@@ -308,8 +308,12 @@ func (p *Puller) layer(ctx context.Context, l v1.Layer) (*Layer, error) {
 		return nil, err
 	}
 	defer rc.Close()
-	n, err := ConvertLayer(ctx, p.CAS, rc)
+	batch := p.CAS.NewBatch()
+	n, err := ConvertLayer(ctx, batch, rc)
 	if err != nil {
+		return nil, err
+	}
+	if err := batch.Flush(ctx); err != nil {
 		return nil, err
 	}
 	id, err := tree.Write(ctx, p.Store, n)
