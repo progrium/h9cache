@@ -82,6 +82,7 @@ func (c *CAS) LoadPacks(ctx context.Context) error {
 	}
 	c.pmu.Lock()
 	c.lastRefresh = time.Now()
+	first := len(c.packs) == 0 && c.fullLoad.IsZero()
 	var todo []string
 	for _, k := range keys {
 		id := strings.TrimPrefix(k, "packidx/")
@@ -118,7 +119,39 @@ func (c *CAS) LoadPacks(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
+	if first && firstErr == nil {
+		c.pmu.Lock()
+		if c.fullLoad.IsZero() {
+			c.fullLoad = c.lastRefresh
+		}
+		c.pmu.Unlock()
+	}
 	return firstErr
+}
+
+// ReloadPacks forgets every loaded index and reads them all again, after
+// garbage collection deleted or rewrote packs.
+func (c *CAS) ReloadPacks(ctx context.Context) error {
+	start := time.Now()
+	c.pmu.Lock()
+	c.locs = map[string]loc{}
+	c.packs = map[string]bool{}
+	c.pmu.Unlock()
+	if err := c.LoadPacks(ctx); err != nil {
+		return err
+	}
+	c.pmu.Lock()
+	c.fullLoad = start
+	c.pmu.Unlock()
+	return nil
+}
+
+// PacksLoadedBefore reports whether the indexes were last loaded whole
+// before t.
+func (c *CAS) PacksLoadedBefore(t time.Time) bool {
+	c.pmu.RLock()
+	defer c.pmu.RUnlock()
+	return c.fullLoad.Before(t)
 }
 
 func (c *CAS) register(pack string, entries []packEntry) {
