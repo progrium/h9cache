@@ -46,6 +46,9 @@ type Entry struct {
 	Group string `json:"group,omitempty"`
 	MTime int64  `json:"mtime"`
 	Size  int64  `json:"size,omitempty"`
+	// Major and Minor are a device node's numbers.
+	Major int64 `json:"major,omitempty"`
+	Minor int64 `json:"minor,omitempty"`
 
 	Tree   string      `json:"tree,omitempty"`   // Dir: the child tree's id
 	Opaque bool        `json:"opaque,omitempty"` // Dir in a layer: hides everything below

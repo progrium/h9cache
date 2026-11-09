@@ -38,10 +38,10 @@ The design is in [Registry cache over 9P](https://claude.ai/artifact/LwfegkQMCtV
   each chunk compressed on its own, with a small index object per pack. A
   chunk read is one ranged GET, however small the chunk, and the pack indexes
   are loaded at startup. Any number of instances can share one bucket.
-- **Read-only 9P2000.** Walks and stats read tree objects from a memory cache,
-  and reads fetch only the chunks they need, through a memory cache and an
-  optional disk cache, reading the next few chunks ahead. Writes get
-  "read-only file system".
+- **Read-only 9P2000 and 9P2000.L.** Walks and stats read tree objects from a
+  memory cache, and reads fetch only the chunks they need, through a memory
+  cache and an optional disk cache, reading the next few chunks ahead. Writes
+  get "read-only file system", or `EROFS` over 9P2000.L.
 
 ### Files the server adds
 
@@ -78,7 +78,30 @@ image: an absolute target starts at the image root, `..` stops there, and a
 walk follows at most 40 links. Exec, open, and stat work through links. A
 directory listing shows a link as its target under the link's name, and
 leaves out dangling links. What's lost is `readlink`, so `ls -l` shows no
-arrows. 9P2000.L, where links are real, comes later.
+arrows. Over 9P2000.L, links are real (see below).
+
+### 9P2000.L
+
+A client that asks for 9P2000.L in its `Tversion` gets it: Linux's v9fs
+(`mount -t 9p -o trans=tcp,version=9p2000.L,aname=alpine:3.20 HOST /mnt`),
+QEMU, and other .L clients. The same image is served with Linux's
+semantics:
+
+- **Symlinks are symlinks.** A walk stops at one, `Treadlink` returns its
+  target as the layer gave it, and the client resolves it, as Linux does.
+  Listings show links as links, dangling ones too.
+- **Owners are numbers**, the uid and gid from the layer, and modes keep
+  their setuid, setgid, and sticky bits.
+- **Device nodes and FIFOs** have their type and device numbers, so a Linux
+  client makes `/dev/null` its own null device. Images pulled before device
+  numbers were kept serve devices as 0, 0.
+- **Not served:** extended attributes (`Txattrwalk` is `EOPNOTSUPP`, which
+  Linux takes as none). Locks are always granted, since nothing changes.
+  `Tstatfs` reports no free space.
+
+h9 asks for `9P2000.L.Z` and gets 9P2000, which its translator passes
+through. 9P2000 gives h9 owner names and whole directories in one read,
+where .L would cost it a round trip per entry.
 
 ### Other details
 
@@ -88,14 +111,14 @@ arrows. 9P2000.L, where links are real, comes later.
   symlink and its target.
 - **Owners** are shown as names from the image's own `/etc/passwd` and
   `/etc/group`, or as the number when there's no entry.
-- **Device nodes and FIFOs** are listed but fail to open.
+- **Device nodes and FIFOs** are listed but fail to open over 9P2000.
 - **Mount points** that h9 binds onto (`/dev`, `/env`, `/fd`,
   `/mnt/term/cwd`, `/net`, `/proc`, `/srv`, and `/tmp`) are added to the image
   as empty directories when the image lacks them, since a 9P root is
   read-only and h9 needs `/mnt/term/cwd` for the working directory.
-- **Not kept yet:** setuid, setgid, and sticky bits are stored but not served
-  (9P2000 has no bits for them), and extended attributes, file capabilities
-  included, are dropped.
+- **Not kept yet:** extended attributes, file capabilities included, are
+  dropped. Setuid, setgid, and sticky bits are stored, and served only over
+  9P2000.L (9P2000 has no bits for them).
 
 ## Running Linux images in h9
 
@@ -325,7 +348,7 @@ tree/        tree objects, layer merge, symlink resolution, qids
 pull/        reference parsing, tag resolution, layer conversion, pull claims
 imagefs/     an image as a 9P file tree, with /.h9index and /.h9image
 index/       the .h9index text format
-ninep/       9P2000 server (and a small client for tests)
+ninep/       9P2000 and 9P2000.L server (and a small client for tests)
 web/         9P over WebSocket, and the metadata files over HTTP
 access/      the client tokens file
 gc/          garbage collection
@@ -346,7 +369,7 @@ writing through `tree` and `cas`. `ninep` knows nothing about images, and
 4. WebSocket transport, the metadata files over HTTP, client tokens, and the
    pull claim for several instances. **Built.**
 5. Garbage collection. **Built.**
-6. 9P2000.L, with real symlinks, once h9's dotl translator exists.
+6. 9P2000.L, with real symlinks. **Built.**
 
 ## Test
 

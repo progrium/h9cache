@@ -82,8 +82,10 @@ func ConvertLayer(ctx context.Context, b *cas.Batch, r io.Reader) (*tree.Node, e
 			e.Target = path.Clean("/" + hdr.Linkname)
 		case tar.TypeChar:
 			e.Kind = tree.Char
+			e.Major, e.Minor = hdr.Devmajor, hdr.Devminor
 		case tar.TypeBlock:
 			e.Kind = tree.Block
+			e.Major, e.Minor = hdr.Devmajor, hdr.Devminor
 		case tar.TypeFifo:
 			e.Kind = tree.FIFO
 		default:

@@ -48,7 +48,8 @@ var (
 	ErrWalkNoDir  = errors.New("walk in non-directory")
 )
 
-// Server serves an FS over 9P2000.
+// Server serves an FS over 9P2000, and over 9P2000.L to a client that asks
+// for it when the FS is an LFS.
 type Server struct {
 	FS    FS
 	Log   *slog.Logger
@@ -78,8 +79,9 @@ type fid struct {
 	file   File
 	open   bool
 	isDir  bool
-	dir    []byte // encoded entries of an open directory, from dirOff on
-	dirOff uint64 // offset the next directory read must use
+	dir    []byte    // encoded entries of an open directory, from dirOff on
+	dirOff uint64    // offset the next directory read must use
+	ents   []DirEntL // a .L directory's listing, from its first read
 }
 
 type conn struct {
@@ -87,6 +89,7 @@ type conn struct {
 	rw    io.ReadWriteCloser
 	ctx   context.Context
 	msize uint32
+	dotl  bool // 9P2000.L was negotiated
 
 	wmu sync.Mutex
 
@@ -132,7 +135,7 @@ func (s *Server) ServeConnContext(parent context.Context, rw io.ReadWriteCloser)
 		c.mu.Lock()
 		if _, dup := c.tags[f.Tag]; dup {
 			c.mu.Unlock()
-			c.reply(rerror(f.Tag, errors.New("tag in use")))
+			c.reply(c.errReply(f.Tag, errors.New("tag in use")))
 			continue
 		}
 		done := make(chan struct{})
@@ -173,6 +176,17 @@ func rerror(tag uint16, err error) *Fcall {
 	return &Fcall{Type: Rerror, Tag: tag, Ename: err.Error()}
 }
 
+func (c *conn) errReply(tag uint16, err error) *Fcall {
+	if c.dotl {
+		return rlerror(tag, err)
+	}
+	return rerror(tag, err)
+}
+
+// version negotiates the dialect. A client that asks for 9P2000.L gets it
+// if the FS can serve it. h9 asks for 9P2000.L.Z and gets 9P2000, which
+// its translator passes through: 9P2000 gives it owner names and whole
+// directories in one read, where .L would cost a round trip per entry.
 func (c *conn) version(f *Fcall) *Fcall {
 	c.mu.Lock()
 	c.fids = map[uint32]*fid{}
@@ -185,9 +199,15 @@ func (c *conn) version(f *Fcall) *Fcall {
 		return rerror(f.Tag, errors.New("msize too small"))
 	}
 	c.msize = msize
+	_, canL := c.srv.FS.(LFS)
 	v := Version
-	if !strings.HasPrefix(f.Version, Version) {
+	c.dotl = false
+	switch {
+	case !strings.HasPrefix(f.Version, Version):
 		v = "unknown"
+	case canL && (f.Version == VersionL || strings.HasPrefix(f.Version, VersionL+".") && f.Version != VersionLZ):
+		v = VersionL
+		c.dotl = true
 	}
 	return &Fcall{Type: Rversion, Tag: f.Tag, Msize: msize, Version: v}
 }
@@ -213,9 +233,15 @@ func (c *conn) newFid(n uint32, file File) error {
 }
 
 func (c *conn) handle(f *Fcall) *Fcall {
-	r, err := c.dispatch(f)
+	var r *Fcall
+	var err error
+	if c.dotl {
+		r, err = c.dispatchL(f)
+	} else {
+		r, err = c.dispatch(f)
+	}
 	if err != nil {
-		return rerror(f.Tag, err)
+		return c.errReply(f.Tag, err)
 	}
 	r.Tag = f.Tag
 	return r

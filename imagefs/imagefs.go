@@ -1,6 +1,7 @@
 // Package imagefs serves pulled images as 9P trees. The attach spec names
 // the image, and the attach's root is the image's merged filesystem.
-// Symlinks are followed by the server, since 9P2000 has none.
+// Over 9P2000, which has no symlinks, the server follows them. Over
+// 9P2000.L they're served as symlinks, and the client follows them.
 package imagefs
 
 import (
@@ -53,6 +54,18 @@ func (fs *FS) Attach(ctx context.Context, uname, aname string) (ninep.File, erro
 		return nil, err
 	}
 	return &file{fs: fs, im: im, path: im.tree.RootPath(), name: "/"}, nil
+}
+
+// AttachL is Attach for a 9P2000.L client. Its tree doesn't follow
+// symlinks, and shows numeric owners.
+func (fs *FS) AttachL(ctx context.Context, uname string, nuname uint32, aname string) (ninep.LFile, error) {
+	root, err := fs.Attach(ctx, uname, aname)
+	if err != nil {
+		return nil, err
+	}
+	f := root.(*file)
+	f.l = true
+	return f, nil
 }
 
 // Open resolves an attach spec to a servable image, pulling it if needed,
@@ -180,6 +193,7 @@ type file struct {
 	path tree.Path
 	name string   // the name this file was reached by
 	virt *virtual // set for a file the server adds
+	l    bool     // served over 9P2000.L: symlinks aren't followed
 }
 
 func (f *file) Qid() ninep.Qid {
@@ -187,8 +201,11 @@ func (f *file) Qid() ninep.Qid {
 		return ninep.Qid{Path: f.virt.qid}
 	}
 	q := ninep.Qid{Path: f.im.tree.QidPath(f.path)}
-	if f.path.Entry().Kind == tree.Dir {
+	switch f.path.Entry().Kind {
+	case tree.Dir:
 		q.Type = ninep.QTDIR
+	case tree.Symlink:
+		q.Type = ninep.QTSYMLINK
 	}
 	return q
 }
@@ -196,10 +213,14 @@ func (f *file) Qid() ninep.Qid {
 func (f *file) Walk(ctx context.Context, name string) (ninep.File, error) {
 	if len(f.path) == 1 && f.virt == nil {
 		if v := f.im.metaFile(name); v != nil {
-			return &file{fs: f.fs, im: f.im, path: f.path, name: name, virt: v}, nil
+			return &file{fs: f.fs, im: f.im, path: f.path, name: name, virt: v, l: f.l}, nil
 		}
 	}
-	p, err := f.im.tree.Walk(ctx, f.path, name)
+	walk := f.im.tree.Walk
+	if f.l {
+		walk = f.im.tree.Step
+	}
+	p, err := walk(ctx, f.path, name)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +230,7 @@ func (f *file) Walk(ctx context.Context, name string) (ninep.File, error) {
 			name = "/"
 		}
 	}
-	return &file{fs: f.fs, im: f.im, path: p, name: name}, nil
+	return &file{fs: f.fs, im: f.im, path: p, name: name, l: f.l}, nil
 }
 
 func (f *file) Stat(ctx context.Context) (ninep.Dir, error) {
@@ -292,4 +313,82 @@ func (f *file) ReadDir(ctx context.Context) ([]ninep.Dir, error) {
 		dirs = append(dirs, d)
 	}
 	return dirs, nil
+}
+
+// Attr returns a file's attributes for 9P2000.L.
+func (f *file) Attr(ctx context.Context) (ninep.Attr, error) {
+	if f.virt != nil {
+		return ninep.Attr{Mode: ninep.S_IFREG | 0o444, Nlink: 1, Size: uint64(len(f.virt.data))}, nil
+	}
+	e := f.path.Entry()
+	a := ninep.Attr{
+		Mode:  linuxType(e.Kind) | e.Mode&0o7777,
+		UID:   uint32(e.UID),
+		GID:   uint32(e.GID),
+		Nlink: 1,
+		Mtime: e.MTime,
+	}
+	switch e.Kind {
+	case tree.File:
+		a.Size = uint64(e.Size)
+	case tree.Symlink:
+		a.Size = uint64(len(e.Target))
+	case tree.Char, tree.Block:
+		a.Rdev = encodeDev(e.Major, e.Minor)
+	}
+	return a, nil
+}
+
+// Readlink returns a symlink's target, as the layer gave it.
+func (f *file) Readlink(ctx context.Context) (string, error) {
+	if f.virt != nil || f.path.Entry().Kind != tree.Symlink {
+		return "", ninep.Errno(ninep.EINVAL)
+	}
+	return f.path.Entry().Target, nil
+}
+
+// ReadDirL lists a directory for 9P2000.L, with symlinks as themselves.
+func (f *file) ReadDirL(ctx context.Context) ([]ninep.DirEntL, error) {
+	entries, err := f.im.tree.ReadDir(ctx, f.path)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ninep.DirEntL, 0, len(entries)+len(f.im.meta))
+	root := len(f.path) == 1
+	if root {
+		for _, v := range f.im.meta {
+			out = append(out, ninep.DirEntL{Name: v.name, Qid: ninep.Qid{Path: v.qid}, Type: ninep.S_IFREG})
+		}
+	}
+	for _, e := range entries {
+		if root && f.im.metaFile(e.Name) != nil {
+			continue
+		}
+		c := &file{fs: f.fs, im: f.im, path: append(append(tree.Path(nil), f.path...), tree.Step{Name: e.Name, Entry: e}), l: true}
+		out = append(out, ninep.DirEntL{Name: e.Name, Qid: c.Qid(), Type: linuxType(e.Kind)})
+	}
+	return out, nil
+}
+
+// encodeDev packs device numbers as Linux's new_encode_dev does, which is
+// how v9fs decodes st_rdev.
+func encodeDev(major, minor int64) uint64 {
+	ma, mi := uint64(major), uint64(minor)
+	return mi&0xff | ma<<8 | (mi&^0xff)<<12
+}
+
+func linuxType(k tree.Kind) uint32 {
+	switch k {
+	case tree.Dir:
+		return ninep.S_IFDIR
+	case tree.Symlink:
+		return ninep.S_IFLNK
+	case tree.Char:
+		return ninep.S_IFCHR
+	case tree.Block:
+		return ninep.S_IFBLK
+	case tree.FIFO:
+		return ninep.S_IFIFO
+	}
+	return ninep.S_IFREG
 }
