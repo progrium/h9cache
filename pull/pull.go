@@ -54,6 +54,22 @@ type Puller struct {
 	Remote   []remote.Option
 	Log      *slog.Logger
 
+	// Mkroot looks references up as ghcr.io/OWNER/mkroot-NAME first; see
+	// Locate.
+	Mkroot bool
+	// MkrootRegistry is where mkroot images are looked up; MkrootRegistry
+	// (ghcr.io) if empty.
+	MkrootRegistry string
+
+	// Instance names this process in pull claims; NewInstanceID if empty.
+	Instance string
+	// ClaimTTL is how long another instance's pull claim stands without
+	// being refreshed; DefaultClaimTTL if zero.
+	ClaimTTL time.Duration
+	// PollInterval is how often a waiter checks for another instance's
+	// pull to finish; 500ms if zero.
+	PollInterval time.Duration
+
 	mu       sync.Mutex
 	inflight map[string]*call
 }
@@ -141,7 +157,10 @@ func (p *Puller) Resolve(ctx context.Context, spec Spec) (*Image, error) {
 	p.mu.Unlock()
 
 	// The pull continues if this caller gives up, so later attaches find it.
-	c.img, c.err = p.pull(context.WithoutCancel(ctx), spec.Ref.Context().Digest(top.String()), top, plat)
+	ref := spec.Ref.Context().Digest(top.String())
+	c.img, c.err = p.claimedPull(context.WithoutCancel(ctx), top, plat, func(ctx context.Context) (*Image, error) {
+		return p.pull(ctx, ref, top, plat)
+	})
 	close(c.done)
 	p.mu.Lock()
 	delete(p.inflight, key)
@@ -219,9 +238,14 @@ func (p *Puller) pull(ctx context.Context, ref name.Digest, top v1.Hash, plat v1
 			return nil, err
 		}
 		found := false
-		for _, m := range im.Manifests {
-			if m.Platform != nil && m.Platform.Satisfies(plat) {
-				manifest, platform, found = m.Digest, m.Platform, true
+		for _, want := range candidatePlatforms(plat) {
+			for _, m := range im.Manifests {
+				if m.Platform != nil && m.Platform.Satisfies(want) {
+					manifest, platform, found = m.Digest, m.Platform, true
+					break
+				}
+			}
+			if found {
 				break
 			}
 		}
@@ -327,6 +351,20 @@ func (p *Puller) layer(ctx context.Context, l v1.Layer) (*Layer, error) {
 	}
 	p.log().Debug("converted layer", "digest", d.String(), "tree", id)
 	return &rec, nil
+}
+
+// candidatePlatforms lists the platforms to look for in an index, best
+// first. h9 runs Linux and 9front programs alike, so a Linux platform
+// falls back to Plan 9 on the same architecture, for root images such as
+// 9front's that have no Linux image.
+func candidatePlatforms(plat v1.Platform) []v1.Platform {
+	out := []v1.Platform{plat}
+	if plat.OS == "linux" {
+		p9 := plat
+		p9.OS = "plan9"
+		out = append(out, p9)
+	}
+	return out
 }
 
 // MountPoints are the directories h9 binds onto when it builds a

@@ -4,6 +4,11 @@
 //
 //	h9reg serve --store /var/lib/h9reg --listen tcp!*!564
 //	h9 --root tcp!localhost!564 --root-spec alpine:3.20 sh
+//
+// It also serves 9P over WebSocket, where the URL path names the image:
+//
+//	h9reg serve --listen http!*!8564
+//	h9 --root ws://localhost:8564/alpine:3.20 sh
 package main
 
 import (
@@ -13,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -22,6 +28,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
+	"github.com/progrium/h9reg/access"
 	"github.com/progrium/h9reg/cas"
 	"github.com/progrium/h9reg/imagefs"
 	"github.com/progrium/h9reg/ninep"
@@ -30,13 +37,15 @@ import (
 	"github.com/progrium/h9reg/store/dir"
 	"github.com/progrium/h9reg/store/s3"
 	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9reg/web"
 )
 
 const usage = `usage: h9reg serve [flags]
        h9reg pull [flags] IMAGE...
 
 Commands:
-  serve   serve images over 9P; the attach spec names the image
+  serve   serve images over 9P; the attach spec, or the WebSocket URL
+          path, names the image
   pull    pull images into the store ahead of time
 
 IMAGE is a reference such as alpine:3.20, ghcr.io/org/app@sha256:...,
@@ -60,6 +69,12 @@ type config struct {
 	diskMB   int64
 	prefetch int
 	verbose  bool
+	tokens   string
+	tlsCert  string
+	tlsKey   string
+	claimTTL time.Duration
+	mkroot   bool
+	mkrootRg string
 }
 
 func main() {
@@ -79,7 +94,13 @@ func main() {
 		def = "h9reg-data"
 	}
 	fs.StringVar(&cfg.store, "store", def, "object store: a directory (or dir:PATH), or s3://BUCKET[/PREFIX][?endpoint=URL&region=R&path-style=true]; $H9REG_STORE")
-	fs.Var(&cfg.listen, "listen", "address to serve 9P on: tcp!HOST!PORT or unix!PATH; repeatable (default tcp!*!564)")
+	fs.Var(&cfg.listen, "listen", "address to serve on: tcp!HOST!PORT or unix!PATH for 9P, http!HOST!PORT or https!HOST!PORT for 9P over WebSocket and the image files; repeatable (default tcp!*!564)")
+	fs.StringVar(&cfg.tokens, "tokens", "", "file of client tokens and the repositories each may attach; every HTTP request then needs one")
+	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "certificate for https listeners")
+	fs.StringVar(&cfg.tlsKey, "tls-key", "", "key for https listeners")
+	fs.BoolVar(&cfg.mkroot, "mkroot", true, "look up OWNER/NAME, and ghcr.io/OWNER/NAME, as ghcr.io/OWNER/mkroot-NAME first")
+	fs.StringVar(&cfg.mkrootRg, "mkroot-registry", pull.MkrootRegistry, "registry --mkroot looks in")
+	fs.DurationVar(&cfg.claimTTL, "claim-ttl", pull.DefaultClaimTTL, "how long another instance's pull claim stands without being refreshed")
 	fs.StringVar(&cfg.platform, "platform", pull.DefaultPlatform().String(), "platform picked from multi-platform images")
 	fs.DurationVar(&cfg.tagTTL, "tag-ttl", 5*time.Minute, "how long a tag's resolution is trusted before checking upstream")
 	fs.Int64Var(&cfg.cacheMB, "cache-mb", 256, "memory for cached chunks, in MB")
@@ -158,7 +179,10 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 			remote.WithAuthFromKeychain(authn.DefaultKeychain),
 			remote.WithUserAgent("h9reg"),
 		},
-		Log: log,
+		Log:            log,
+		ClaimTTL:       cfg.claimTTL,
+		Mkroot:         cfg.mkroot,
+		MkrootRegistry: cfg.mkrootRg,
 	}
 	fs := &imagefs.FS{Puller: puller, CAS: chunks, Trees: tree.NewCache(st, 64<<10)}
 
@@ -172,6 +196,9 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 			if err != nil {
 				return err
 			}
+			if spec, err = puller.Locate(ctx, spec); err != nil {
+				return err
+			}
 			img, err := puller.Resolve(ctx, spec)
 			if err != nil {
 				return err
@@ -179,7 +206,7 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 			if err := fs.Prepare(ctx, img); err != nil {
 				return err
 			}
-			fmt.Printf("%s\t%s\t%s\n", a, img.Manifest, img.Platform)
+			fmt.Printf("%s\t%s\t%s\t%s\n", a, pull.RepoName(spec.Ref), img.Manifest, img.Platform)
 		}
 		return nil
 	}
@@ -191,8 +218,41 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 	if len(cfg.listen) == 0 {
 		cfg.listen = listFlag{"tcp!*!564"}
 	}
+	var tokens *access.Tokens
+	if cfg.tokens != "" {
+		if tokens, err = access.Load(cfg.tokens); err != nil {
+			return err
+		}
+	}
+	handler := &web.Handler{FS: fs, Server: srv, Tokens: tokens, Log: log}
 	errc := make(chan error, len(cfg.listen))
 	for _, addr := range cfg.listen {
+		proto, _, _ := strings.Cut(addr, "!")
+		switch proto {
+		case "http", "https":
+			l, err := listen("tcp" + strings.TrimPrefix(addr, proto))
+			if err != nil {
+				return err
+			}
+			hs := &http.Server{Handler: handler, ReadHeaderTimeout: 30 * time.Second}
+			defer hs.Close()
+			if proto == "https" {
+				if cfg.tlsCert == "" || cfg.tlsKey == "" {
+					return fmt.Errorf("%s: https needs --tls-cert and --tls-key", addr)
+				}
+				go func() { errc <- hs.ServeTLS(l, cfg.tlsCert, cfg.tlsKey) }()
+			} else {
+				go func() { errc <- hs.Serve(l) }()
+			}
+			log.Info("serving 9P over WebSocket", "addr", addr, "store", cfg.store, "tokens", tokens != nil)
+			continue
+		case "unix":
+		default:
+			if tokens != nil {
+				// Plain 9P has no way to present a token.
+				return fmt.Errorf("%s: plain 9P can't check --tokens; serve it on a unix socket, or only http and https", addr)
+			}
+		}
 		l, err := listen(addr)
 		if err != nil {
 			return err

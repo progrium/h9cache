@@ -46,21 +46,52 @@ type image struct {
 // isn't stored, and returns its root.
 func (fs *FS) Attach(ctx context.Context, uname, aname string) (ninep.File, error) {
 	if aname == "" {
+		aname = accessFrom(ctx).Spec
+	}
+	im, err := fs.Open(ctx, aname)
+	if err != nil {
+		return nil, err
+	}
+	return &file{fs: fs, im: im, path: im.tree.RootPath(), name: "/"}, nil
+}
+
+// Open resolves an attach spec to a servable image, pulling it if needed,
+// after checking it against the context's Access.
+func (fs *FS) Open(ctx context.Context, aname string) (*Image, error) {
+	if aname == "" {
 		return nil, errors.New("attach spec must name an image, such as alpine:3.20")
 	}
 	spec, err := pull.ParseSpec(aname)
 	if err != nil {
 		return nil, fmt.Errorf("attach spec %q: %w", aname, err)
 	}
+	// Access is checked against the repository actually pulled.
+	if spec, err = fs.Puller.Locate(ctx, spec); err != nil {
+		return nil, err
+	}
+	if err := accessFrom(ctx).check(spec); err != nil {
+		return nil, err
+	}
 	rec, err := fs.Puller.Resolve(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
-	im, err := fs.image(ctx, rec)
-	if err != nil {
-		return nil, err
+	return fs.image(ctx, rec)
+}
+
+// Image is a pulled image ready to serve.
+type Image = image
+
+// Manifest returns the image's manifest digest.
+func (im *image) Manifest() string { return im.rec.Manifest }
+
+// MetaFile returns the contents of a file the server adds at the root,
+// /.h9index or /.h9image.
+func (im *image) MetaFile(name string) ([]byte, bool) {
+	if v := im.metaFile(name); v != nil {
+		return v.data, true
 	}
-	return &file{fs: fs, im: im, path: im.tree.RootPath(), name: "/"}, nil
+	return nil, false
 }
 
 func (fs *FS) image(ctx context.Context, rec *pull.Image) (*image, error) {
@@ -122,6 +153,19 @@ func (fs *FS) idNames(ctx context.Context, im *image, p string) map[int]string {
 	return names
 }
 
+// owners names an entry's owner and group: the names its layer carried,
+// else its ids as the image's passwd and group files name them.
+func (im *image) owners(e tree.Entry) (string, string) {
+	u, g := e.User, e.Group
+	if u == "" {
+		u = idName(im.users, e.UID)
+	}
+	if g == "" {
+		g = idName(im.groups, e.GID)
+	}
+	return u, g
+}
+
 func idName(m map[int]string, id int) string {
 	if n, ok := m[id]; ok {
 		return n
@@ -178,9 +222,8 @@ func (f *file) Stat(ctx context.Context) (ninep.Dir, error) {
 		Mtime: uint32(e.MTime),
 		Atime: uint32(e.MTime),
 		Name:  f.name,
-		UID:   idName(f.im.users, e.UID),
-		GID:   idName(f.im.groups, e.GID),
 	}
+	d.UID, d.GID = f.im.owners(e)
 	d.MUID = d.UID
 	switch e.Kind {
 	case tree.Dir:

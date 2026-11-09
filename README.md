@@ -10,6 +10,13 @@ h9reg serve --store /var/lib/h9reg --listen 'tcp!*!564'
 h9 --root 'tcp!localhost!564' --root-spec alpine:3.20 --ns linux.ns sh
 ```
 
+Or over WebSocket, where the URL path names the image:
+
+```sh
+h9reg serve --store /var/lib/h9reg --listen 'http!*!8564'
+h9 --root ws://localhost:8564/alpine:3.20 --ns linux.ns sh
+```
+
 The design is in [Registry cache over 9P](https://claude.ai/artifact/LwfegkQMCtV3DDncZFcw76).
 
 ## How it works
@@ -103,6 +110,89 @@ h9 --root 'tcp!localhost!564' --root-spec alpine:3.20 --ns linux.ns /bin/sh -c '
 
 `--ns` is a guest path, so a relative name is found in the working directory.
 
+## WebSocket and HTTP
+
+An `http!HOST!PORT` or `https!HOST!PORT` listener serves:
+
+| Request | Serves |
+| --- | --- |
+| WebSocket upgrade on `/IMAGE` | 9P, one binary message per 9P message, subprotocol `9p`. An attach with an empty spec attaches `IMAGE`; an attach that names a spec attaches that one. |
+| `GET /IMAGE/.h9index` | The image's index, for h9's `--root-index` URL |
+| `GET /IMAGE/.h9image` | The image's config, for prefetching |
+| `GET /healthz` | `ok`, for load balancers |
+
+`IMAGE` is written as on the command line, such as `alpine:3.20`,
+`ghcr.io/org/app@sha256:…`, or `alpine:3.20!linux/arm64`. The metadata files
+carry the platform manifest digest as their ETag. Fetched by digest, they're
+cached for a year as immutable; fetched by tag, they're revalidated each
+time. `https!` needs `--tls-cert` and `--tls-key`.
+
+### Client tokens
+
+`--tokens FILE` makes every HTTP request present a token, as
+`Authorization: Bearer TOKEN` (h9's `--root-header`) or a `token` query
+parameter, for namespace-file mounts that can't send headers. The file lists
+each token and the repositories it may attach:
+
+```
+# comments and blank lines are ignored
+3f9c0b7e5d1a42c8a6e1  docker.io/library/*  ghcr.io/acme/*
+77ab5e10c4d94b2f9a02  *
+```
+
+A pattern matches `REGISTRY/REPOSITORY`, with Docker Hub written `docker.io`,
+and `*` matches any run of characters, slashes included. Tokens are at least
+16 characters. A missing or unknown token gets 401, and an image outside the
+token's patterns gets 403 over HTTP or `permission denied` from the attach.
+
+```sh
+h9 --root ws://reg.example:8564/alpine:3.20 --root-header 'Authorization: Bearer 3f9c0b7e5d1a42c8a6e1' sh
+```
+
+Plain 9P has no way to present a token, so with `--tokens` h9reg refuses
+`tcp!` listeners. A `unix!` socket is still allowed, guarded by its file
+permissions. Tokens guard which images a client may attach, not upstream
+credentials: those stay on the server either way.
+
+### Several instances
+
+Instances can share one store, such as an S3 bucket behind a load balancer.
+Before an instance pulls an image, it claims the pull by creating
+`pulling/DIGEST/PLATFORM` with a conditional put. Other instances that want
+the same image wait for its record to appear instead of pulling it too. The
+claimant rewrites its claim every quarter of `--claim-ttl` and deletes it
+when done, so a claim left untouched for `--claim-ttl` belongs to an instance
+that died, and the next waiter takes it over. A claim only saves work: what
+a pull writes is content-addressed, so two instances that do pull the same
+image at once store the same result.
+
+## 9front roots
+
+h9 runs a 9P root as a 9front root, so a 9front tree packaged as an image
+needs nothing more:
+
+```sh
+h9 --root ws://localhost:8564/progrium/9front rc
+```
+
+**mkroot images.** Root images are built by repositories named
+`mkroot-NAME`, such as [mkroot-9front](https://github.com/progrium/mkroot-9front),
+and published as `ghcr.io/OWNER/mkroot-NAME`. A reference to `OWNER/NAME`
+that names no registry, or names `ghcr.io`, is looked up as
+`ghcr.io/OWNER/mkroot-NAME` first, so `progrium/9front` attaches
+`ghcr.io/progrium/mkroot-9front`. When that doesn't exist, the reference is
+pulled as written: `acme/app` is still Docker Hub's. Each answer is
+remembered for `--tag-ttl`. Client tokens are checked against the repository
+actually pulled. `--mkroot=false` turns the lookup off.
+
+**Platforms.** A multi-platform image with no image for `linux/ARCH` falls
+back to `plan9/ARCH`, so 9front images need no `!plan9/amd64`.
+
+**Owners.** Plan 9 owners are names, not ids. A layer entry with zero ids
+and an owner name other than `root` keeps its names, and the server reports
+them as they are. Other entries are named through the image's `/etc/passwd`
+and `/etc/group`.
+
 ## Commands
 
 ```
@@ -113,7 +203,12 @@ h9reg pull [flags] IMAGE...  pull images into the store ahead of time
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--store` | `$H9REG_STORE`, else `h9reg-data` | The object store: a directory, `dir:PATH`, or an `s3://` URL (below) |
-| `--listen` | `tcp!*!564` | `tcp!HOST!PORT` or `unix!PATH`; repeatable |
+| `--listen` | `tcp!*!564` | `tcp!HOST!PORT` or `unix!PATH` for 9P, `http!HOST!PORT` or `https!HOST!PORT` for WebSocket and HTTP; repeatable |
+| `--tokens` | none | A file of client tokens; every HTTP request then needs one |
+| `--tls-cert`, `--tls-key` | none | Certificate and key for `https!` listeners |
+| `--mkroot` | on | Look `OWNER/NAME` and `ghcr.io/OWNER/NAME` up as `ghcr.io/OWNER/mkroot-NAME` first |
+| `--mkroot-registry` | `ghcr.io` | Where `--mkroot` looks |
+| `--claim-ttl` | `2m` | How long another instance's pull claim stands without being refreshed |
 | `--platform` | `linux/` plus the build's architecture | Platform picked from multi-platform images |
 | `--tag-ttl` | `5m` | How long a tag's resolution is trusted |
 | `--cache-mb` | `256` | Memory for cached chunks |
@@ -141,8 +236,10 @@ one layout.
 | `platforms/` | index digest and platform | The manifest digest picked from a multi-platform index |
 | `refs/` | registry/repo/tag | Manifest or index digest, and when it was resolved |
 | `index/v1/` | platform manifest digest | The image's `.h9index` text |
+| `mkroot/` | reference as written | The mkroot reference it was found as, or none, and when it was checked |
+| `pulling/` | top digest and platform | A pull in progress: the instance and when it last refreshed the claim |
 
-Only `refs/` is ever overwritten. A pull writes one batch of packs per
+Only `refs/`, `mkroot/`, and `pulling/` are ever overwritten. A pull writes one batch of packs per
 layer and flushes it before recording the layer, so nothing refers to a chunk
 that isn't stored. A pack is written before its index, so an index is only
 ever visible for a whole pack. An instance that misses a chunk reloads the
@@ -186,14 +283,17 @@ store/       object store interface
   storetest/ tests every backend runs
 cas/         chunking over fvs core, packs, and the chunk caches
 tree/        tree objects, layer merge, symlink resolution, qids
-pull/        reference parsing, tag resolution, layer conversion
+pull/        reference parsing, tag resolution, layer conversion, pull claims
 imagefs/     an image as a 9P file tree, with /.h9index and /.h9image
 index/       the .h9index text format
 ninep/       9P2000 server (and a small client for tests)
+web/         9P over WebSocket, and the metadata files over HTTP
+access/      the client tokens file
 ```
 
 Dependencies run one way: `imagefs` → `tree` → `cas` → `store`, with `pull`
-writing through `tree` and `cas`. `ninep` knows nothing about images.
+writing through `tree` and `cas`. `ninep` knows nothing about images, and
+`web` carries `ninep` over WebSocket with the client's access in the context.
 
 ## Roadmap
 
@@ -201,11 +301,10 @@ writing through `tree` and `cas`. `ninep` knows nothing about images.
    server with server-side symlinks. **Built.**
 2. `/.h9index` and `/.h9image`, per hyper9's
    [mount-index](https://github.com/progrium/hyper9/blob/main/design/mount-index.md).
-   **Built.** Serving the index over HTTP comes with step 4's WebSocket
-   listener.
+   **Built.**
 3. The S3 backend with packs and the chunk cache tiers. **Built.**
-4. WebSocket transport, client tokens, and the pull claim for several
-   instances.
+4. WebSocket transport, the metadata files over HTTP, client tokens, and the
+   pull claim for several instances. **Built.**
 5. Garbage collection.
 6. 9P2000.L, with real symlinks, once h9's dotl translator exists.
 
