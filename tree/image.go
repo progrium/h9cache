@@ -213,6 +213,12 @@ func (img *Image) QidPath(p Path) uint64 {
 	if l := p.Entry().Link; l != "" {
 		key = l
 	}
+	return img.QidPathOf(key)
+}
+
+// QidPathOf derives the qid path for an image path that may not be in the
+// tree, such as a file the server adds.
+func (img *Image) QidPathOf(key string) uint64 {
 	h := blake3.New()
 	h.WriteString(img.Root.Tree)
 	h.Write([]byte{0})

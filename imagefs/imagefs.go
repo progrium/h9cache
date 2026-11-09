@@ -39,6 +39,7 @@ type image struct {
 	rec    *pull.Image
 	users  map[int]string
 	groups map[int]string
+	meta   []*virtual // files the server adds at the root
 }
 
 // Attach resolves aname as an image reference, pulling the image if it
@@ -72,6 +73,9 @@ func (fs *FS) image(ctx context.Context, rec *pull.Image) (*image, error) {
 	im = &image{tree: &tree.Image{Root: rec.Root, Cache: fs.Trees}, rec: rec}
 	im.users = fs.idNames(ctx, im, "etc/passwd")
 	im.groups = fs.idNames(ctx, im, "etc/group")
+	if err := fs.addMeta(ctx, im); err != nil {
+		return nil, err
+	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	if fs.images == nil {
@@ -129,10 +133,14 @@ type file struct {
 	fs   *FS
 	im   *image
 	path tree.Path
-	name string // the name this file was reached by
+	name string   // the name this file was reached by
+	virt *virtual // set for a file the server adds
 }
 
 func (f *file) Qid() ninep.Qid {
+	if f.virt != nil {
+		return ninep.Qid{Path: f.virt.qid}
+	}
 	q := ninep.Qid{Path: f.im.tree.QidPath(f.path)}
 	if f.path.Entry().Kind == tree.Dir {
 		q.Type = ninep.QTDIR
@@ -141,6 +149,11 @@ func (f *file) Qid() ninep.Qid {
 }
 
 func (f *file) Walk(ctx context.Context, name string) (ninep.File, error) {
+	if len(f.path) == 1 && f.virt == nil {
+		if v := f.im.metaFile(name); v != nil {
+			return &file{fs: f.fs, im: f.im, path: f.path, name: name, virt: v}, nil
+		}
+	}
 	p, err := f.im.tree.Walk(ctx, f.path, name)
 	if err != nil {
 		return nil, err
@@ -155,6 +168,9 @@ func (f *file) Walk(ctx context.Context, name string) (ninep.File, error) {
 }
 
 func (f *file) Stat(ctx context.Context) (ninep.Dir, error) {
+	if f.virt != nil {
+		return f.virt.stat(f.im), nil
+	}
 	e := f.path.Entry()
 	d := ninep.Dir{
 		Qid:   f.Qid(),
@@ -176,6 +192,9 @@ func (f *file) Stat(ctx context.Context) (ninep.Dir, error) {
 }
 
 func (f *file) Open(ctx context.Context, mode uint8) error {
+	if f.virt != nil {
+		return nil
+	}
 	switch f.path.Entry().Kind {
 	case tree.Char, tree.Block, tree.FIFO:
 		return ErrDevice
@@ -184,6 +203,12 @@ func (f *file) Open(ctx context.Context, mode uint8) error {
 }
 
 func (f *file) ReadAt(ctx context.Context, p []byte, off int64) (int, error) {
+	if f.virt != nil {
+		if off >= int64(len(f.virt.data)) {
+			return 0, io.EOF
+		}
+		return copy(p, f.virt.data[off:]), nil
+	}
 	e := f.path.Entry()
 	if e.Kind != tree.File || off >= e.Size {
 		return 0, io.EOF
@@ -199,8 +224,17 @@ func (f *file) ReadDir(ctx context.Context) ([]ninep.Dir, error) {
 	if err != nil {
 		return nil, err
 	}
-	dirs := make([]ninep.Dir, 0, len(entries))
+	dirs := make([]ninep.Dir, 0, len(entries)+len(f.im.meta))
+	root := len(f.path) == 1
+	if root {
+		for _, v := range f.im.meta {
+			dirs = append(dirs, v.stat(f.im))
+		}
+	}
 	for _, e := range entries {
+		if root && f.im.metaFile(e.Name) != nil {
+			continue // shadowed by the server's own file
+		}
 		p, err := f.im.tree.Resolve(ctx, f.path, e)
 		if err != nil {
 			// A dangling or looping symlink has nothing to show.

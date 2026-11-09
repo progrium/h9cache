@@ -140,6 +140,7 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	fs := &imagefs.FS{Puller: puller, CAS: chunks, Trees: tree.NewCache(st, 64<<10)}
 
 	switch cmd {
 	case "pull":
@@ -155,13 +156,16 @@ func run(cmd string, cfg config, args []string, log *slog.Logger) error {
 			if err != nil {
 				return err
 			}
+			if err := fs.Prepare(ctx, img); err != nil {
+				return err
+			}
 			fmt.Printf("%s\t%s\t%s\n", a, img.Manifest, img.Platform)
 		}
 		return nil
 	}
 
 	srv := &ninep.Server{
-		FS:  &imagefs.FS{Puller: puller, CAS: chunks, Trees: tree.NewCache(st, 64<<10)},
+		FS:  fs,
 		Log: log,
 	}
 	if len(cfg.listen) == 0 {
