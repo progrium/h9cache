@@ -335,6 +335,12 @@ An image that's unused for `--keep` and then attached while a collection is
 marking can be deleted under that attach. With a `--keep` of days, that's
 rare, and the next attach pulls the image again.
 
+## Deploying
+
+`deploy/` deploys h9cache to Cloudflare Containers, with images in R2: a
+Dockerfile, a Worker that passes every request to the container, and the
+wrangler config. See [deploy/README.md](deploy/README.md).
+
 ## Layout
 
 ```
@@ -352,6 +358,7 @@ ninep/       9P2000 and 9P2000.L server (and a small client for tests)
 web/         9P over WebSocket, and the metadata files over HTTP
 access/      the client tokens file
 gc/          garbage collection
+deploy/      Cloudflare Containers deployment
 ```
 
 Dependencies run one way: `imagefs` → `tree` → `cas` → `store`, with `pull`
