@@ -1,4 +1,4 @@
-// Package store defines the object store that everything in h9reg is kept
+// Package store defines the object store that everything in h9cache is kept
 // in: chunks, tree objects, layer and image records, and refs. Keys are
 // slash-separated paths such as "trees/ab/cdef…", so an S3 bucket and a
 // directory share one layout.

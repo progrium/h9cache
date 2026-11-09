@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/progrium/h9reg/store"
-	"github.com/progrium/h9reg/store/dir"
+	"github.com/progrium/h9cache/store"
+	"github.com/progrium/h9cache/store/dir"
 )
 
 func randomBytes(n int, seed int64) []byte {

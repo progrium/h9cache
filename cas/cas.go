@@ -27,7 +27,7 @@ import (
 	core "github.com/fvs-lab/core"
 	"github.com/klauspost/compress/zstd"
 
-	"github.com/progrium/h9reg/store"
+	"github.com/progrium/h9cache/store"
 )
 
 // Chunk is one piece of a file: its content id and length.

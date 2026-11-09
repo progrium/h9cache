@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/progrium/h9reg/store/storetest"
+	"github.com/progrium/h9cache/store/storetest"
 )
 
 func TestStore(t *testing.T) {

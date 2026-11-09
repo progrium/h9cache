@@ -1,4 +1,4 @@
-// Package storetest checks that a store.Store behaves as h9reg expects.
+// Package storetest checks that a store.Store behaves as h9cache expects.
 // Every backend runs it.
 package storetest
 
@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/progrium/h9reg/store"
+	"github.com/progrium/h9cache/store"
 )
 
 // Run checks st, which must start empty.

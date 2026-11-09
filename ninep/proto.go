@@ -1,6 +1,6 @@
-// Package ninep is a 9P2000 file server. It serves any tree that implements
-// FS and File, handling the protocol: version negotiation, fids, walks,
-// directory reads, and flushes. It knows nothing about images.
+// Package ninep is a 9P2000 and 9P2000.L file server. It serves any tree
+// that implements FS and File, handling the protocol: version negotiation,
+// fids, walks, directory reads, and flushes. It knows nothing about images.
 package ninep
 
 import (
@@ -46,6 +46,7 @@ const (
 const (
 	NoTag    = 0xFFFF
 	NoFid    = 0xFFFFFFFF
+	NoUname  = 0xFFFFFFFF
 	MaxWalk  = 16
 	IOHdrSz  = 24
 	Version  = "9P2000"
@@ -108,6 +109,12 @@ type Fcall struct {
 	Count   uint32
 	Data    []byte
 	Stat    []byte
+	// NUname is a 9P2000.L Tattach's numeric user, or NoUname when the
+	// message had none.
+	NUname uint32
+	// Body is the rest of a 9P2000.L message, past its tag: decoded and
+	// encoded by the .L code, not here. Marshal appends it to any message.
+	Body []byte
 }
 
 var errShort = errors.New("9P: short message")
@@ -210,6 +217,7 @@ func Unmarshal(b []byte) (*Fcall, error) {
 		f.Afid = d.u32()
 		f.Uname = d.str()
 		f.Aname = d.str()
+		f.NUname = nuname(d)
 	case Rauth, Rattach, Rcreate:
 		f.Qid = d.qid()
 		if f.Type == Rcreate {
@@ -220,6 +228,7 @@ func Unmarshal(b []byte) (*Fcall, error) {
 		f.Afid = d.u32()
 		f.Uname = d.str()
 		f.Aname = d.str()
+		f.NUname = nuname(d)
 	case Rerror:
 		f.Ename = d.str()
 	case Tflush:
@@ -273,12 +282,24 @@ func Unmarshal(b []byte) (*Fcall, error) {
 		f.Stat = d.bytes(int(d.u16()))
 	case Rflush, Rclunk, Rremove, Rwstat:
 	default:
-		return nil, fmt.Errorf("9P: unknown message type %d", f.Type)
+		if !isL(f.Type) {
+			return nil, fmt.Errorf("9P: unknown message type %d", f.Type)
+		}
+		f.Body = d.b
+		d.b = nil
 	}
 	if d.err != nil {
 		return nil, d.err
 	}
 	return f, nil
+}
+
+// nuname reads a .L attach's n_uname, which 9P2000's attach lacks.
+func nuname(d *decoder) uint32 {
+	if len(d.b) < 4 {
+		return NoUname
+	}
+	return d.u32()
 }
 
 // Marshal encodes a message with its leading size field.
@@ -347,6 +368,7 @@ func Marshal(f *Fcall) []byte {
 		e.u16(uint16(len(f.Stat)))
 		e.b = append(e.b, f.Stat...)
 	}
+	e.b = append(e.b, f.Body...)
 	binary.LittleEndian.PutUint32(e.b, uint32(len(e.b)))
 	return e.b
 }

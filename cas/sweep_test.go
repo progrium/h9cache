@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/progrium/h9reg/store/dir"
+	"github.com/progrium/h9cache/store/dir"
 )
 
 func TestSweepPacks(t *testing.T) {

@@ -18,9 +18,9 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/store"
-	"github.com/progrium/h9reg/store/dir"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/store"
+	"github.com/progrium/h9cache/store/dir"
 )
 
 // slowRegistry serves one image whose blob downloads are slow enough that

@@ -11,7 +11,7 @@ import (
 
 	"github.com/zeebo/blake3"
 
-	"github.com/progrium/h9reg/store"
+	"github.com/progrium/h9cache/store"
 )
 
 // Errors from walking an image.
@@ -127,6 +127,34 @@ func (img *Image) RootPath() Path {
 func (img *Image) Walk(ctx context.Context, p Path, name string) (Path, error) {
 	depth := 0
 	return img.resolve(ctx, p, []string{name}, &depth)
+}
+
+// Step moves one name from p without following a symlink: the path can
+// end at one. ".." stops at the root.
+func (img *Image) Step(ctx context.Context, p Path, name string) (Path, error) {
+	cur := append(Path(nil), p...)
+	switch name {
+	case "", ".":
+		return cur, nil
+	case "..":
+		if len(cur) > 1 {
+			cur = cur[:len(cur)-1]
+		}
+		return cur, nil
+	}
+	dir := cur.Entry()
+	if dir.Kind != Dir {
+		return nil, ErrNotDir
+	}
+	d, err := img.Cache.Dir(ctx, dir.Tree)
+	if err != nil {
+		return nil, err
+	}
+	e, ok := d.Lookup(name)
+	if !ok {
+		return nil, ErrNotExist
+	}
+	return append(cur, Step{name, e}), nil
 }
 
 // WalkPath resolves a slash-separated path from the root.

@@ -1,4 +1,4 @@
-# h9reg
+# h9cache
 
 A container registry cache that serves images as 9P trees. A client attaches
 with an image reference as the attach spec and gets that image's merged
@@ -6,14 +6,14 @@ filesystem as its root. The first attach of an image pulls and converts it,
 and every later attach is served from the store.
 
 ```sh
-h9reg serve --store /var/lib/h9reg --listen 'tcp!*!564'
+h9cache serve --store /var/lib/h9cache --listen 'tcp!*!564'
 h9 --root 'tcp!localhost!564' --root-spec alpine:3.20 --ns linux.ns sh
 ```
 
 Or over WebSocket, where the URL path names the image:
 
 ```sh
-h9reg serve --store /var/lib/h9reg --listen 'http!*!8564'
+h9cache serve --store /var/lib/h9cache --listen 'http!*!8564'
 h9 --root ws://localhost:8564/alpine:3.20 --ns linux.ns sh
 ```
 
@@ -38,10 +38,10 @@ The design is in [Registry cache over 9P](https://claude.ai/artifact/LwfegkQMCtV
   each chunk compressed on its own, with a small index object per pack. A
   chunk read is one ranged GET, however small the chunk, and the pack indexes
   are loaded at startup. Any number of instances can share one bucket.
-- **Read-only 9P2000.** Walks and stats read tree objects from a memory cache,
-  and reads fetch only the chunks they need, through a memory cache and an
-  optional disk cache, reading the next few chunks ahead. Writes get
-  "read-only file system".
+- **Read-only 9P2000 and 9P2000.L.** Walks and stats read tree objects from a
+  memory cache, and reads fetch only the chunks they need, through a memory
+  cache and an optional disk cache, reading the next few chunks ahead. Writes
+  get "read-only file system", or `EROFS` over 9P2000.L.
 
 ### Files the server adds
 
@@ -55,7 +55,7 @@ Each image root also holds two read-only files that aren't in the image:
   symlink to a directory is listed but marked `!unindexed` rather than
   followed, and a name the format can't hold (one with a space or a newline)
   marks its directory `!unindexed`. The index is built the first time an
-  image is served, or by `h9reg pull`, and stored under `index/`. An image
+  image is served, or by `h9cache pull`, and stored under `index/`. An image
   never changes, so neither does its index.
 - **`/.h9image`** is the image's identity and the config a runner needs, one
   `key value` line each, with the value as JSON:
@@ -78,7 +78,30 @@ image: an absolute target starts at the image root, `..` stops there, and a
 walk follows at most 40 links. Exec, open, and stat work through links. A
 directory listing shows a link as its target under the link's name, and
 leaves out dangling links. What's lost is `readlink`, so `ls -l` shows no
-arrows. 9P2000.L, where links are real, comes later.
+arrows. Over 9P2000.L, links are real (see below).
+
+### 9P2000.L
+
+A client that asks for 9P2000.L in its `Tversion` gets it: Linux's v9fs
+(`mount -t 9p -o trans=tcp,version=9p2000.L,aname=alpine:3.20 HOST /mnt`),
+QEMU, and other .L clients. The same image is served with Linux's
+semantics:
+
+- **Symlinks are symlinks.** A walk stops at one, `Treadlink` returns its
+  target as the layer gave it, and the client resolves it, as Linux does.
+  Listings show links as links, dangling ones too.
+- **Owners are numbers**, the uid and gid from the layer, and modes keep
+  their setuid, setgid, and sticky bits.
+- **Device nodes and FIFOs** have their type and device numbers, so a Linux
+  client makes `/dev/null` its own null device. Images pulled before device
+  numbers were kept serve devices as 0, 0.
+- **Not served:** extended attributes (`Txattrwalk` is `EOPNOTSUPP`, which
+  Linux takes as none). Locks are always granted, since nothing changes.
+  `Tstatfs` reports no free space.
+
+h9 asks for `9P2000.L.Z` and gets 9P2000, which its translator passes
+through. 9P2000 gives h9 owner names and whole directories in one read,
+where .L would cost it a round trip per entry.
 
 ### Other details
 
@@ -88,14 +111,14 @@ arrows. 9P2000.L, where links are real, comes later.
   symlink and its target.
 - **Owners** are shown as names from the image's own `/etc/passwd` and
   `/etc/group`, or as the number when there's no entry.
-- **Device nodes and FIFOs** are listed but fail to open.
+- **Device nodes and FIFOs** are listed but fail to open over 9P2000.
 - **Mount points** that h9 binds onto (`/dev`, `/env`, `/fd`,
   `/mnt/term/cwd`, `/net`, `/proc`, `/srv`, and `/tmp`) are added to the image
   as empty directories when the image lacks them, since a 9P root is
   read-only and h9 needs `/mnt/term/cwd` for the working directory.
-- **Not kept yet:** setuid, setgid, and sticky bits are stored but not served
-  (9P2000 has no bits for them), and extended attributes, file capabilities
-  included, are dropped.
+- **Not kept yet:** extended attributes, file capabilities included, are
+  dropped. Setuid, setgid, and sticky bits are stored, and served only over
+  9P2000.L (9P2000 has no bits for them).
 
 ## Running Linux images in h9
 
@@ -149,7 +172,7 @@ token's patterns gets 403 over HTTP or `permission denied` from the attach.
 h9 --root ws://reg.example:8564/alpine:3.20 --root-header 'Authorization: Bearer 3f9c0b7e5d1a42c8a6e1' sh
 ```
 
-Plain 9P has no way to present a token, so with `--tokens` h9reg refuses
+Plain 9P has no way to present a token, so with `--tokens` h9cache refuses
 `tcp!` listeners. A `unix!` socket is still allowed, guarded by its file
 permissions. Tokens guard which images a client may attach, not upstream
 credentials: those stay on the server either way.
@@ -196,14 +219,14 @@ and `/etc/group`.
 ## Commands
 
 ```
-h9reg serve [flags]          serve images over 9P
-h9reg pull [flags] IMAGE...  pull images into the store ahead of time
-h9reg gc [flags]             delete images unused for --keep, and what only they used
+h9cache serve [flags]          serve images over 9P
+h9cache pull [flags] IMAGE...  pull images into the store ahead of time
+h9cache gc [flags]             delete images unused for --keep, and what only they used
 ```
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--store` | `$H9REG_STORE`, else `h9reg-data` | The object store: a directory, `dir:PATH`, or an `s3://` URL (below) |
+| `--store` | `$H9CACHE_STORE`, else `h9cache-data` | The object store: a directory, `dir:PATH`, or an `s3://` URL (below) |
 | `--listen` | `tcp!*!564` | `tcp!HOST!PORT` or `unix!PATH` for 9P, `http!HOST!PORT` or `https!HOST!PORT` for WebSocket and HTTP; repeatable |
 | `--tokens` | none | A file of client tokens; every HTTP request then needs one |
 | `--tls-cert`, `--tls-key` | none | Certificate and key for `https!` listeners |
@@ -254,8 +277,8 @@ pack list, at most once a second, to find packs other instances wrote.
 
 ```sh
 export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…
-h9reg serve --store 's3://my-bucket/h9reg?region=us-east-1'
-h9reg serve --store 's3://h9reg?endpoint=http://localhost:9000&path-style=true'   # MinIO
+h9cache serve --store 's3://my-bucket/h9cache?region=us-east-1'
+h9cache serve --store 's3://h9cache?endpoint=http://localhost:9000&path-style=true'   # MinIO
 ```
 
 The URL is `s3://BUCKET[/PREFIX]`, with optional `endpoint`, `region`, and
@@ -267,7 +290,7 @@ ranged read can't be checked against a whole-object checksum; every chunk is
 checked against its own BLAKE3 id instead.
 
 `go test ./store/s3` runs against an in-process S3 server. Set
-`H9REG_TEST_S3` to an `s3://` URL to also run the store tests against a real
+`H9CACHE_TEST_S3` to an `s3://` URL to also run the store tests against a real
 bucket.
 
 ### ZeroFS
@@ -276,16 +299,16 @@ The directory store works over any POSIX mount, a ZeroFS mount included, with
 no extra code. That's reasonable for a single cache next to a ZeroFS home
 server. With more than one instance, use S3 directly: ZeroFS has one writer,
 its read replicas lag the writer, and its compression and GC duplicate
-h9reg's own.
+h9cache's own.
 
 ## Garbage collection
 
 ```sh
-h9reg gc --store s3://my-bucket/h9reg --dry-run
-h9reg gc --store s3://my-bucket/h9reg --keep 720h
+h9cache gc --store s3://my-bucket/h9cache --dry-run
+h9cache gc --store s3://my-bucket/h9cache --keep 720h
 ```
 
-`h9reg gc` deletes images that weren't pulled or attached within `--keep`,
+`h9cache gc` deletes images that weren't pulled or attached within `--keep`,
 then everything only they used:
 
 1. **Records:** each unused image's record, index, and use record go first,
@@ -315,7 +338,7 @@ rare, and the next attach pulls the image again.
 ## Layout
 
 ```
-cmd/h9reg/   main: flags, store, listeners
+cmd/h9cache/   main: flags, store, listeners
 store/       object store interface
   dir/       directory backend
   s3/        S3 backend
@@ -325,7 +348,7 @@ tree/        tree objects, layer merge, symlink resolution, qids
 pull/        reference parsing, tag resolution, layer conversion, pull claims
 imagefs/     an image as a 9P file tree, with /.h9index and /.h9image
 index/       the .h9index text format
-ninep/       9P2000 server (and a small client for tests)
+ninep/       9P2000 and 9P2000.L server (and a small client for tests)
 web/         9P over WebSocket, and the metadata files over HTTP
 access/      the client tokens file
 gc/          garbage collection
@@ -346,7 +369,7 @@ writing through `tree` and `cas`. `ninep` knows nothing about images, and
 4. WebSocket transport, the metadata files over HTTP, client tokens, and the
    pull claim for several instances. **Built.**
 5. Garbage collection. **Built.**
-6. 9P2000.L, with real symlinks, once h9's dotl translator exists.
+6. 9P2000.L, with real symlinks. **Built.**
 
 ## Test
 

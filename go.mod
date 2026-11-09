@@ -1,4 +1,4 @@
-module github.com/progrium/h9reg
+module github.com/progrium/h9cache
 
 go 1.25.0
 
@@ -10,6 +10,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/fvs-lab/core v0.1.3
 	github.com/google/go-containerregistry v0.22.1
+	github.com/hugelgupf/p9 v0.4.1
 	github.com/johannesboyne/gofakes3 v1.2.0
 	github.com/klauspost/compress v1.20.3
 	github.com/zeebo/blake3 v0.2.4
@@ -37,6 +38,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/u-root/uio v0.0.0-20230305220412-3e8cd9d6bf63 // indirect
 	go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

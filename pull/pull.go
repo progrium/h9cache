@@ -18,9 +18,9 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/store"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/store"
+	"github.com/progrium/h9cache/tree"
 )
 
 // Image is the stored record of a pulled image, under images/.
@@ -85,7 +85,7 @@ type call struct {
 	err  error
 }
 
-// DefaultPlatform is linux on the architecture h9reg was built for.
+// DefaultPlatform is linux on the architecture h9cache was built for.
 func DefaultPlatform() v1.Platform {
 	return v1.Platform{OS: "linux", Architecture: runtime.GOARCH}
 }

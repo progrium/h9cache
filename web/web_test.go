@@ -21,13 +21,13 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/progrium/h9reg/access"
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/imagefs"
-	"github.com/progrium/h9reg/ninep"
-	"github.com/progrium/h9reg/pull"
-	"github.com/progrium/h9reg/store/dir"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/access"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/imagefs"
+	"github.com/progrium/h9cache/ninep"
+	"github.com/progrium/h9cache/pull"
+	"github.com/progrium/h9cache/store/dir"
+	"github.com/progrium/h9cache/tree"
 )
 
 const (
@@ -35,7 +35,7 @@ const (
 	tokenOther = "bbbbbbbbbbbbbbbb"
 )
 
-// setup pushes a one-file image to a test registry and serves h9reg over
+// setup pushes a one-file image to a test registry and serves h9cache over
 // HTTP in front of it. It returns the server URL and the image reference.
 func setup(t *testing.T, tokens bool) (string, string) {
 	var buf bytes.Buffer

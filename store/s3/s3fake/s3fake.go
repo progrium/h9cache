@@ -15,10 +15,10 @@ func URL(t testing.TB, prefix string) string {
 	t.Setenv("AWS_ACCESS_KEY_ID", "test")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
 	backend := s3mem.New()
-	if err := backend.CreateBucket("h9reg"); err != nil {
+	if err := backend.CreateBucket("h9cache"); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(gofakes3.New(backend).Server())
 	t.Cleanup(srv.Close)
-	return "s3://h9reg/" + prefix + "?path-style=true&region=us-east-1&endpoint=" + srv.URL
+	return "s3://h9cache/" + prefix + "?path-style=true&region=us-east-1&endpoint=" + srv.URL
 }

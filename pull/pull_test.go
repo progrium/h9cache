@@ -21,9 +21,9 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/progrium/h9reg/cas"
-	"github.com/progrium/h9reg/store/dir"
-	"github.com/progrium/h9reg/tree"
+	"github.com/progrium/h9cache/cas"
+	"github.com/progrium/h9cache/store/dir"
+	"github.com/progrium/h9cache/tree"
 )
 
 // TarEntry describes one member of a test layer.

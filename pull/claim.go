@@ -12,7 +12,7 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
-	"github.com/progrium/h9reg/store"
+	"github.com/progrium/h9cache/store"
 )
 
 // Claims keep instances sharing a store from pulling the same image at
@@ -44,7 +44,7 @@ func claimKey(top v1.Hash, plat v1.Platform) string {
 func NewInstanceID() string {
 	h, _ := os.Hostname()
 	if h == "" {
-		h = "h9reg"
+		h = "h9cache"
 	}
 	b := make([]byte, 4)
 	rand.Read(b)

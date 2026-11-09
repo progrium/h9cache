@@ -20,6 +20,9 @@ import (
 // packidx/<id>, is a header line and then one 48-byte record per chunk:
 // the chunk id (32 bytes), its offset in the pack (8), its encoded
 // length (4), and its size (4), little-endian.
+
+// packIndexHeader keeps the project's first name: it's in every stored
+// pack index, so changing it would orphan existing stores.
 const packIndexHeader = "h9reg-packidx 1\n"
 
 const packRecord = 48

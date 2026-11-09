@@ -21,7 +21,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 
-	"github.com/progrium/h9reg/store"
+	"github.com/progrium/h9cache/store"
 )
 
 // Store keeps objects in Bucket under Prefix.
