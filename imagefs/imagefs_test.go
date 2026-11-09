@@ -20,6 +20,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
 	"github.com/progrium/h9reg/cas"
+	"github.com/progrium/h9reg/index"
 	"github.com/progrium/h9reg/ninep"
 	"github.com/progrium/h9reg/pull"
 	"github.com/progrium/h9reg/store/dir"
@@ -47,6 +48,8 @@ func pushImage(t *testing.T) string {
 	add(&tar.Header{Name: "home/nobody", Typeflag: tar.TypeReg, Uid: 65534, Gid: 65534}, "hi")
 	add(&tar.Header{Name: "home/stranger", Typeflag: tar.TypeReg, Uid: 1234, Gid: 1234}, "")
 	add(&tar.Header{Name: "dev/null", Typeflag: tar.TypeChar, Devmajor: 1, Devminor: 3}, "")
+	add(&tar.Header{Name: "lib64", Typeflag: tar.TypeSymlink, Linkname: "bin"}, "")
+	add(&tar.Header{Name: "home/odd name", Typeflag: tar.TypeReg}, "")
 	tw.Close()
 	b := buf.Bytes()
 	l, err := tarball.LayerFromOpener(func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(b)), nil })
@@ -54,7 +57,8 @@ func pushImage(t *testing.T) string {
 		t.Fatal(err)
 	}
 	img, _ := mutate.AppendLayers(empty.Image, l)
-	img, _ = mutate.ConfigFile(img, &v1.ConfigFile{OS: "linux", Architecture: "amd64"})
+	img, _ = mutate.ConfigFile(img, &v1.ConfigFile{OS: "linux", Architecture: "amd64",
+		Config: v1.Config{Env: []string{"PATH=/bin"}, Cmd: []string{"/bin/sh"}, WorkingDir: "/root"}})
 
 	srv := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
 	t.Cleanup(srv.Close)
@@ -66,7 +70,7 @@ func pushImage(t *testing.T) string {
 	return ref
 }
 
-func TestServeImage(t *testing.T) {
+func connect(t *testing.T) (*ninep.Client, string) {
 	ref := pushImage(t)
 	st, _ := dir.New(t.TempDir())
 	chunks := cas.New(st, 1<<20)
@@ -81,7 +85,12 @@ func TestServeImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	t.Cleanup(func() { c.Close() })
+	return c, ref
+}
+
+func TestServeImage(t *testing.T) {
+	c, ref := connect(t)
 
 	if _, err := c.RPC(&ninep.Fcall{Type: ninep.Tattach, Fid: 0, Afid: ninep.NoFid, Aname: ""}); err == nil {
 		t.Fatal("empty attach spec accepted")
@@ -155,5 +164,76 @@ func TestServeImage(t *testing.T) {
 	}
 	if strings.Join(names, " ") != "busybox sh" {
 		t.Fatalf("bin lists %v", names)
+	}
+}
+
+func readFile(t *testing.T, c *ninep.Client, path ...string) []byte {
+	t.Helper()
+	if _, err := c.RPC(&ninep.Fcall{Type: ninep.Twalk, Fid: 0, Newfid: 50, Wname: path}); err != nil {
+		t.Fatalf("walk %v: %v", path, err)
+	}
+	defer c.RPC(&ninep.Fcall{Type: ninep.Tclunk, Fid: 50})
+	if _, err := c.RPC(&ninep.Fcall{Type: ninep.Topen, Fid: 50, Mode: ninep.OREAD}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := c.ReadAll(50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// Every entry in /.h9index must match what the server says for that path,
+// since h9 answers stats from the index and opens from the server.
+func TestIndexMatchesServer(t *testing.T) {
+	c, ref := connect(t)
+	if _, err := c.RPC(&ninep.Fcall{Type: ninep.Tattach, Fid: 0, Afid: ninep.NoFid, Aname: ref}); err != nil {
+		t.Fatal(err)
+	}
+	ix, err := index.Parse(bytes.NewReader(readFile(t, c, ".h9index")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, e := range ix.Entries {
+		seen[e.Path] = true
+		var wname []string
+		if e.Path != "/" {
+			wname = strings.Split(e.Path[1:], "/")
+		}
+		if _, err := c.RPC(&ninep.Fcall{Type: ninep.Twalk, Fid: 0, Newfid: 60, Wname: wname}); err != nil {
+			t.Fatalf("walk %s: %v", e.Path, err)
+		}
+		r, err := c.RPC(&ninep.Fcall{Type: ninep.Tstat, Fid: 60})
+		c.RPC(&ninep.Fcall{Type: ninep.Tclunk, Fid: 60})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, _, _ := ninep.UnmarshalDir(r.Stat)
+		isDir := d.Qid.Type&ninep.QTDIR != 0
+		if d.Qid.Path != e.QidPath || d.Qid.Vers != e.QidVers || isDir != (e.QidType == 'd') ||
+			d.Mode != e.Mode || d.Length != e.Length || d.Mtime != e.Mtime || d.UID != e.UID || d.GID != e.GID {
+			t.Fatalf("%s: index %+v, server %+v", e.Path, e, d)
+		}
+	}
+	for _, p := range []string{"/", "/.h9image", "/bin/sh", "/lib64", "/mnt/term/cwd", "/home/nobody"} {
+		if !seen[p] {
+			t.Fatalf("%s missing from the index", p)
+		}
+	}
+	for _, p := range []string{"/.h9index", "/bin/gone", "/lib64/busybox", "/home/odd name"} {
+		if seen[p] {
+			t.Fatalf("%s is in the index", p)
+		}
+	}
+	if strings.Join(ix.Unindexed, " ") != "/home /lib64" {
+		t.Fatalf("unindexed: %v", ix.Unindexed)
+	}
+
+	img := string(readFile(t, c, ".h9image"))
+	for _, line := range []string{"h9image 1", `platform "linux/amd64"`, `cmd ["/bin/sh"]`, `env ["PATH=/bin"]`, `workdir "/root"`, `entrypoint []`, "manifest \"sha256:"} {
+		if !strings.Contains(img, line) {
+			t.Fatalf(".h9image lacks %q:\n%s", line, img)
+		}
 	}
 }
