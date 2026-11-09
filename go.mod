@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.16
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.9
 	github.com/aws/smithy-go v1.28.8
+	github.com/coder/websocket v1.8.15
 	github.com/fvs-lab/core v0.1.3
 	github.com/google/go-containerregistry v0.22.1
 	github.com/johannesboyne/gofakes3 v1.2.0

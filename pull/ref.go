@@ -40,3 +40,13 @@ func ParseSpec(s string, opts ...name.Option) (Spec, error) {
 	}
 	return spec, nil
 }
+
+// RepoName names a reference's repository as access rules match it:
+// registry/repository, with Docker Hub written docker.io.
+func RepoName(ref name.Reference) string {
+	reg := ref.Context().RegistryStr()
+	if reg == name.DefaultRegistry {
+		reg = "docker.io"
+	}
+	return reg + "/" + ref.Context().RepositoryStr()
+}

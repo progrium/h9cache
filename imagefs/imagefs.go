@@ -46,21 +46,48 @@ type image struct {
 // isn't stored, and returns its root.
 func (fs *FS) Attach(ctx context.Context, uname, aname string) (ninep.File, error) {
 	if aname == "" {
+		aname = accessFrom(ctx).Spec
+	}
+	im, err := fs.Open(ctx, aname)
+	if err != nil {
+		return nil, err
+	}
+	return &file{fs: fs, im: im, path: im.tree.RootPath(), name: "/"}, nil
+}
+
+// Open resolves an attach spec to a servable image, pulling it if needed,
+// after checking it against the context's Access.
+func (fs *FS) Open(ctx context.Context, aname string) (*Image, error) {
+	if aname == "" {
 		return nil, errors.New("attach spec must name an image, such as alpine:3.20")
 	}
 	spec, err := pull.ParseSpec(aname)
 	if err != nil {
 		return nil, fmt.Errorf("attach spec %q: %w", aname, err)
 	}
+	if err := accessFrom(ctx).check(spec); err != nil {
+		return nil, err
+	}
 	rec, err := fs.Puller.Resolve(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
-	im, err := fs.image(ctx, rec)
-	if err != nil {
-		return nil, err
+	return fs.image(ctx, rec)
+}
+
+// Image is a pulled image ready to serve.
+type Image = image
+
+// Manifest returns the image's manifest digest.
+func (im *image) Manifest() string { return im.rec.Manifest }
+
+// MetaFile returns the contents of a file the server adds at the root,
+// /.h9index or /.h9image.
+func (im *image) MetaFile(name string) ([]byte, bool) {
+	if v := im.metaFile(name); v != nil {
+		return v.data, true
 	}
-	return &file{fs: fs, im: im, path: im.tree.RootPath(), name: "/"}, nil
+	return nil, false
 }
 
 func (fs *FS) image(ctx context.Context, rec *pull.Image) (*image, error) {

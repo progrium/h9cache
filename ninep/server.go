@@ -98,8 +98,15 @@ type conn struct {
 
 // ServeConn serves one client connection until it closes.
 func (s *Server) ServeConn(rw io.ReadWriteCloser) {
+	s.ServeConnContext(context.Background(), rw)
+}
+
+// ServeConnContext serves one connection with requests made under ctx, so
+// a transport can pass what it knows about the client, such as its
+// credentials, to the FS.
+func (s *Server) ServeConnContext(parent context.Context, rw io.ReadWriteCloser) {
 	defer rw.Close()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	max := s.Msize
 	if max == 0 {

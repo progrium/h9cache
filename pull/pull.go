@@ -54,6 +54,15 @@ type Puller struct {
 	Remote   []remote.Option
 	Log      *slog.Logger
 
+	// Instance names this process in pull claims; NewInstanceID if empty.
+	Instance string
+	// ClaimTTL is how long another instance's pull claim stands without
+	// being refreshed; DefaultClaimTTL if zero.
+	ClaimTTL time.Duration
+	// PollInterval is how often a waiter checks for another instance's
+	// pull to finish; 500ms if zero.
+	PollInterval time.Duration
+
 	mu       sync.Mutex
 	inflight map[string]*call
 }
@@ -141,7 +150,10 @@ func (p *Puller) Resolve(ctx context.Context, spec Spec) (*Image, error) {
 	p.mu.Unlock()
 
 	// The pull continues if this caller gives up, so later attaches find it.
-	c.img, c.err = p.pull(context.WithoutCancel(ctx), spec.Ref.Context().Digest(top.String()), top, plat)
+	ref := spec.Ref.Context().Digest(top.String())
+	c.img, c.err = p.claimedPull(context.WithoutCancel(ctx), top, plat, func(ctx context.Context) (*Image, error) {
+		return p.pull(ctx, ref, top, plat)
+	})
 	close(c.done)
 	p.mu.Lock()
 	delete(p.inflight, key)
