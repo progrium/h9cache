@@ -1,12 +1,12 @@
 // Package web serves images over HTTP: 9P over WebSocket, where the URL
 // path is the attach spec, and each image's /.h9index and /.h9image as
-// plain files, for h9's --root-index URL and for prefetching.
+// plain files, for h9's index= URL and for prefetching.
 //
 //	wss://reg.example/docker.io/library/alpine:3.20     9P, attaching that image
 //	https://reg.example/alpine:3.20/.h9index            the image's index
 //
 // With tokens configured, every request needs one, as
-// "Authorization: Bearer TOKEN" (h9's --root-header) or a token query
+// "Authorization: Bearer TOKEN" (h9's header=) or a token query
 // parameter (for namespace-file mounts, which can't send headers).
 package web
 
