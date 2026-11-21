@@ -3,12 +3,12 @@
 // gets that image's merged filesystem as the root:
 //
 //	h9cache serve --store /var/lib/h9cache --listen tcp!*!564
-//	h9 --root tcp!localhost!564 --root-spec alpine:3.20 sh
+//	h9 --url 'tcp://localhost:564:#L:spec=alpine:3.20' sh
 //
 // It also serves 9P over WebSocket, where the URL path names the image:
 //
 //	h9cache serve --listen http!*!8564
-//	h9 --root ws://localhost:8564/alpine:3.20 sh
+//	h9 --url ws://localhost:8564/alpine:3.20:#L sh
 package main
 
 import (

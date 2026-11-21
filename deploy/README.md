@@ -49,8 +49,7 @@ Cloudflare account with Containers enabled.
 Then attach an image with the token:
 
 ```sh
-h9 --root wss://h9cache.SUBDOMAIN.workers.dev/alpine:3.20 \
-   --root-header 'Authorization: Bearer TOKEN' sh
+h9 --url "wss://h9cache.SUBDOMAIN.workers.dev/alpine:3.20:#L:header=Authorization: Bearer TOKEN" sh
 ```
 
 ## Settings
