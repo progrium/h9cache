@@ -7,14 +7,14 @@ and every later attach is served from the store.
 
 ```sh
 h9cache serve --store /var/lib/h9cache --listen 'tcp!*!564'
-h9 --root 'tcp!localhost!564' --root-spec alpine:3.20 --ns linux.ns sh
+h9 --url 'tcp://localhost:564:#L:spec=alpine:3.20' sh
 ```
 
 Or over WebSocket, where the URL path names the image:
 
 ```sh
 h9cache serve --store /var/lib/h9cache --listen 'http!*!8564'
-h9 --root ws://localhost:8564/alpine:3.20 --ns linux.ns sh
+h9 --url ws://localhost:8564/alpine:3.20:#L sh
 ```
 
 The design is in [Registry cache over 9P](https://claude.ai/artifact/LwfegkQMCtV3DDncZFcw76).
@@ -114,24 +114,25 @@ where .L would cost it a round trip per entry.
 - **Device nodes and FIFOs** are listed but fail to open over 9P2000.
 - **Mount points** that h9 binds onto (`/dev`, `/env`, `/fd`,
   `/mnt/term/cwd`, `/net`, `/proc`, `/srv`, and `/tmp`) are added to the image
-  as empty directories when the image lacks them, since a 9P root is
-  read-only and h9 needs `/mnt/term/cwd` for the working directory.
+  as empty directories when the image lacks them. h9 releases before its
+  `--url` mounts bound onto them in the root itself; current ones bind the
+  kernel's mount points in front of the root, so they don't need them.
 - **Not kept yet:** extended attributes, file capabilities included, are
   dropped. Setuid, setgid, and sticky bits are stored, and served only over
   9P2000.L (9P2000 has no bits for them).
 
 ## Running Linux images in h9
 
-h9 treats a 9P root as a 9front root today: only a host directory is
-detected as a Linux root. Until it detects Linux trees over 9P too, put the
-image in the Linux view with a namespace file:
+A mount on `#L` is the Linux tree, beside the machine's 9front root (by
+default h9's built-in one), so a bare program name runs from the image:
 
 ```sh
-printf "bind -a / '#λ'\n" > linux.ns
-h9 --root 'tcp!localhost!564' --root-spec alpine:3.20 --ns linux.ns /bin/sh -c 'cat /etc/os-release'
+h9 --url 'tcp://localhost:564:#L:spec=alpine:3.20' /bin/sh -c 'cat /etc/os-release'
 ```
 
-`--ns` is a guest path, so a relative name is found in the working directory.
+`spec=` names the image, since a reference's colon would end a `tcp://`
+URL's path. Over a WebSocket the path names it, as in
+`--url ws://localhost:8564/alpine:3.20:#L`.
 
 ## WebSocket and HTTP
 
@@ -140,7 +141,7 @@ An `http!HOST!PORT` or `https!HOST!PORT` listener serves:
 | Request | Serves |
 | --- | --- |
 | WebSocket upgrade on `/IMAGE` | 9P, one binary message per 9P message, subprotocol `9p`. An attach with an empty spec attaches `IMAGE`; an attach that names a spec attaches that one. |
-| `GET /IMAGE/.h9index` | The image's index, for h9's `--root-index` URL |
+| `GET /IMAGE/.h9index` | The image's index, for h9's `index=` URL |
 | `GET /IMAGE/.h9image` | The image's config, for prefetching |
 | `GET /healthz` | `ok`, for load balancers |
 
@@ -153,7 +154,7 @@ time. `https!` needs `--tls-cert` and `--tls-key`.
 ### Client tokens
 
 `--tokens FILE` makes every HTTP request present a token, as
-`Authorization: Bearer TOKEN` (h9's `--root-header`) or a `token` query
+`Authorization: Bearer TOKEN` (h9's `header=`) or a `token` query
 parameter, for namespace-file mounts that can't send headers. The file lists
 each token and the repositories it may attach:
 
@@ -169,7 +170,7 @@ and `*` matches any run of characters, slashes included. Tokens are at least
 token's patterns gets 403 over HTTP or `permission denied` from the attach.
 
 ```sh
-h9 --root ws://reg.example:8564/alpine:3.20 --root-header 'Authorization: Bearer 3f9c0b7e5d1a42c8a6e1' sh
+h9 --url "ws://reg.example:8564/alpine:3.20:#L:header=Authorization: Bearer 3f9c0b7e5d1a42c8a6e1" sh
 ```
 
 Plain 9P has no way to present a token, so with `--tokens` h9cache refuses
@@ -191,11 +192,11 @@ image at once store the same result.
 
 ## 9front roots
 
-h9 runs a 9P root as a 9front root, so a 9front tree packaged as an image
+A mount on `/` is the 9front root, so a 9front tree packaged as an image
 needs nothing more:
 
 ```sh
-h9 --root ws://localhost:8564/progrium/9front rc
+h9 --url ws://localhost:8564/progrium/9front rc
 ```
 
 **mkroot images.** Root images are built by repositories named
